@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学生工作台</title>
+  <script src="sync.js"></script>
+  <script src="email.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#f0f4ff;--card:#fff;--text:#2a2d3a;--text2:#6b7280;--text3:#9ca3af;
+  --pri:#5b8def;--pri-hover:#4a7de0;--grn:#34c759;--org:#ff9f0a;
+  --border:#e8ecf4;--sh:0 8px 30px rgba(20,30,60,.08);
+  --radius:16px;
+}
+body{
+  font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  background:linear-gradient(135deg,#e8f0fe 0%,#f3e8fe 50%,#ffe5f1 100%);
+  min-height:100vh;-webkit-font-smoothing:antialiased;
+}
+.container{width:100%;max-width:420px;margin:0 auto;padding:20px;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{background:var(--card);border-radius:var(--radius);padding:32px 28px;box-shadow:var(--sh);border:1px solid var(--border);width:100%}
+.logo{text-align:center;margin-bottom:28px}
+.logo-icon{font-size:48px;display:block;margin-bottom:8px}
+.logo-title{font-size:22px;font-weight:700;color:var(--text)}
+.logo-sub{font-size:13px;color:var(--text2);margin-top:4px}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px;font-weight:500}
+.form-group input{width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px;color:var(--text);font-family:inherit;transition:border-color .2s;background:#fafbfd}
+.form-group input:focus{outline:none;border-color:var(--pri);background:#fff}
+.btn{width:100%;padding:13px;border:none;border-radius:12px;font-size:16px;font-weight:600;cursor:pointer;font-family:inherit;transition:all .2s;margin-top:8px}
+.btn-primary{background:var(--pri);color:#fff}
+.btn-primary:hover{background:var(--pri-hover);transform:translateY(-1px);box-shadow:0 4px 12px rgba(91,141,239,.3)}
+.btn-primary:active{transform:none}
+.btn-outline{background:transparent;border:2px solid var(--border);color:var(--text2);margin-top:12px}
+.btn-outline:hover{border-color:var(--pri);color:var(--pri)}
+.switch-text{text-align:center;margin-top:16px;font-size:13px;color:var(--text2)}
+.switch-text a{color:var(--pri);cursor:pointer;font-weight:600;text-decoration:none}
+.switch-text a:hover{text-decoration:underline}
+.alert{padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:16px;display:none}
+.alert-error{background:#ffe8e6;color:#d32f2f;border:1px solid #ffcdd2;display:block}
+.alert-success{background:#e3f7e9;color:#2e7d32;border:1px solid #c8e6c9;display:block}
+.student-fields{display:none}
+.student-fields.show{display:block}
+.grade-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.grade-row select{width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px;color:var(--text);font-family:inherit;background:#fafbfd;cursor:pointer}
+.grade-row select:focus{outline:none;border-color:var(--pri);background:#fff}
+.btn .spinner{display:none;width:18px;height:18px;border:2px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin:0 auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.btn.loading .btn-text{display:none}
+.btn.loading .spinner{display:block}
+.btn.loading{cursor:wait}
+@media(max-width:480px){.card{padding:26px 20px}.logo-icon{font-size:36px}.logo-title{font-size:20px}.form-group input{padding:13px 14px;font-size:16px}.btn{padding:14px;font-size:16px}.sync-panel{padding:20px;max-width:100%}.container{padding:14px;align-items:flex-start}.card{margin-top:10px}.grade-row{grid-template-columns:1fr 1fr}}
+#appFrame{width:100%;height:100vh;border:none;display:none;background:#f0f4ff}
+/* ===== 忘记密码弹窗（复用弹窗样式）===== */
+.sync-mask{position:fixed;inset:0;background:rgba(20,30,60,.45);display:none;align-items:center;justify-content:center;z-index:999;padding:20px}
+.sync-panel{background:#fff;border-radius:var(--radius);box-shadow:var(--sh);width:100%;max-width:400px;padding:24px;max-height:86vh;overflow:auto}
+.sync-head{display:flex;justify-content:space-between;align-items:center;font-size:17px;font-weight:700;color:var(--text);margin-bottom:6px}
+.sync-close{cursor:pointer;font-size:18px;color:var(--text3);padding:0 4px}
+.sync-close:hover{color:var(--text)}
+.sync-status{font-size:14px;margin-bottom:14px}
+.sync-status .ok{color:#2e7d32}
+.sync-status .off{color:#b26a00}
+.sync-tip{margin-top:16px;font-size:12px;line-height:1.7;color:var(--text3);background:#f8fafd;border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+</style>
+</head>
+<body>
+
+<div class="container" id="loginScreen">
+  <div class="card">
+    <div class="logo">
+      <span class="logo-icon">📚</span>
+      <div class="logo-title">智慧学习平台</div>
+    </div>
+
+    <div id="alertBox" class="alert"></div>
+
+    <form id="loginForm" onsubmit="return false;">
+      <div class="form-group"><label>用户名</label><input type="text" id="username" placeholder="请输入用户名" required autocomplete="username"></div>
+      <div class="form-group"><label>密码</label><input type="password" id="password" placeholder="请输入密码" required autocomplete="current-password"></div>
+      <button type="button" class="btn btn-primary" id="loginBtn"><span class="btn-text">登 录</span><span class="spinner"></span></button>
+    </form>
+
+    <form id="registerForm" onsubmit="return false;" style="display:none">
+      <div class="form-group"><label>用户名</label><input type="text" id="regUsername" placeholder="请输入用户名" required></div>
+      <div class="form-group"><label>显示名称</label><input type="text" id="regDisplayName" placeholder="你的名字（如：张小明）" required></div>
+      <div class="form-group"><label>密码</label><input type="password" id="regPassword" placeholder="请设置密码（至少4位）" required minlength="4"></div>
+      <div class="form-group"><label>确认密码</label><input type="password" id="regPassword2" placeholder="请再次输入密码" required minlength="4"></div>
+      <div class="form-group"><label>注册邀请码（4 位）</label><input type="text" id="regInvite" placeholder="请输入管理员提供的 4 位邀请码" required maxlength="4" inputmode="numeric" autocomplete="off"></div>
+      <div class="student-fields show" id="studentFields">
+        <div class="form-group"><label>学段与年级（用于匹配学习内容）</label>
+          <div class="grade-row">
+            <select id="regStage"><option value="小学">小学</option><option value="初中">初中</option><option value="高中">高中</option></select>
+            <select id="regGrade"><option value="一年级">一年级</option><option value="二年级">二年级</option><option value="三年级">三年级</option><option value="四年级">四年级</option><option value="五年级">五年级</option><option value="六年级">六年级</option></select>
+          </div>
+        </div>
+      </div>
+      <button type="button" class="btn btn-primary" id="regBtn"><span class="btn-text">注 册</span><span class="spinner"></span></button>
+    </form>
+
+    <div class="switch-text"><span id="switchLabel">还没有账号？</span><a onclick="toggleMode()" id="switchLink">立即注册</a></div>
+    <div class="switch-text" style="margin-top:6px"><a onclick="openForgotModal()" style="color:var(--text3)">忘记密码？</a></div>
+  </div>
+</div>
+
+<!-- 忘记密码弹窗 -->
+<div class="sync-mask" id="forgotMask" onclick="if(event.target===this)closeForgotModal()">
+  <div class="sync-panel">
+    <div class="sync-head"><span>🔑 忘记密码</span><span class="sync-close" onclick="closeForgotModal()">✕</span></div>
+    <div class="sync-status" id="forgotStatus"></div>
+    <div id="forgotBody"></div>
+    <div class="sync-tip" id="forgotTip"></div>
+  </div>
+</div>
+
+<iframe id="appFrame" title="应用"></iframe>
+
+<script>
+// ===== 用户库（与 learning.html / admin.html 共用 localStorage sw_users）=====
+const USER_DB_KEY = 'sw_users';
+const SESSION_KEY = 'sw_session';
+
+function loadUsers(){ try{ return JSON.parse(localStorage.getItem(USER_DB_KEY))||{}; }catch(e){ return {}; } }
+function saveUsers(u){ localStorage.setItem(USER_DB_KEY, JSON.stringify(u)); }
+function saveSession(s){ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function getSession(){ try{ return JSON.parse(localStorage.getItem(SESSION_KEY)); }catch(e){ return null; } }
+function clearSession(){ localStorage.removeItem(SESSION_KEY); }
+
+// 与 learning.html / admin.html 完全一致的密码哈希
+function simpleHash(str){
+  var hash=0; str=String(str);
+  for(var i=0;i<str.length;i++){ var c=str.charCodeAt(i); hash=((hash<<5)-hash)+c; hash|=0; }
+  return 'h_'+Math.abs(hash).toString(36);
+}
+
+function initDefaultUsers(){
+  var users=loadUsers();
+  var changed=false;
+  if(!users['xiaoming']){ users['xiaoming']={password:simpleHash('1234'),role:'student',displayName:'张小明',stage:'小学',grade:'二年级',semester:'上'}; changed=true; }
+  if(!users['parent']){ users['parent']={password:simpleHash('1234'),role:'parent',displayName:'张爸爸'}; changed=true; }
+  if(!users['seeyoulook@qq.com']){ users['seeyoulook@qq.com']={password:simpleHash('admin123'),role:'admin',displayName:'总管理员',isAdmin:true}; changed=true; }
+  if(!localStorage.getItem('sw_families')) localStorage.setItem('sw_families', JSON.stringify({}));
+  if(!localStorage.getItem('sw_invite_code')) localStorage.setItem('sw_invite_code', String(Math.floor(1000+Math.random()*9000)));
+  if(changed) saveUsers(users); // 仅在确实新增了默认用户时才保存，避免触发不必要的云端推送
+}
+
+var isRegisterMode=false;
+function toggleMode(){
+  isRegisterMode=!isRegisterMode;
+  document.getElementById('loginForm').style.display=isRegisterMode?'none':'block';
+  document.getElementById('registerForm').style.display=isRegisterMode?'block':'none';
+  document.getElementById('switchLabel').textContent=isRegisterMode?'已有账号？':'还没有账号？';
+  document.getElementById('switchLink').textContent=isRegisterMode?'返回登录':'立即注册';
+  hideAlert();
+  document.getElementById('regUsername').value='';
+  document.getElementById('regDisplayName').value='';
+  document.getElementById('regPassword').value='';
+  document.getElementById('regPassword2').value='';
+  document.getElementById('regInvite').value='';
+}
+function showAlert(m,t){ var b=document.getElementById('alertBox'); b.textContent=m; b.className='alert alert-'+t; }
+function hideAlert(){ var b=document.getElementById('alertBox'); b.className='alert'; b.textContent=''; }
+function setLoading(id,on){ document.getElementById(id).classList.toggle('loading',on); }
+
+// ===== 忘记密码（验证码重置）=====
+// 验证码规则：学生/家长由管理员在管理端生成；管理员由系统生成并发至账号邮箱
+function openForgotModal(){
+  document.getElementById('forgotMask').style.display='flex';
+  document.getElementById('forgotStatus').innerHTML='';
+  document.getElementById('forgotBody').innerHTML=
+    '<div class="form-group"><label>用户名</label><input type="text" id="fgUsername" placeholder="请输入你的用户名" style="width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px"></div>'+
+    '<button type="button" class="btn btn-primary" onclick="fgSendCode()">获取验证码</button>';
+  document.getElementById('forgotTip').textContent='学生/家长账号：请联系管理员获取验证码；管理员账号：验证码将发送至绑定邮箱。';
+}
+function closeForgotModal(){ document.getElementById('forgotMask').style.display='none'; }
+function fgLog(m,t){ var b=document.getElementById('forgotStatus'); b.innerHTML='<span class="'+(t||'off')+'">'+m+'</span>'; }
+function fgSendCode(){
+  var uname=(document.getElementById('fgUsername').value||'').trim();
+  if(!uname){ fgLog('请输入用户名','off'); return; }
+  var users=loadUsers();
+  var user=users[uname];
+  if(!user){ fgLog('该用户名不存在','off'); return; }
+  if(user.role==='admin'){
+    // 管理员：生成验证码并发至账号邮箱（seeyoulook@qq.com）
+    fgLog('⏳ 正在生成并发送验证码…');
+    var code=String(Math.floor(100000+Math.random()*900000)); // 6位
+    var expire=Date.now()+30*60*1000; // 30分钟有效
+    localStorage.setItem('sw_reset_'+uname, JSON.stringify({code:code,expire:expire}));
+    var email=uname; // 用户名即邮箱
+    // 调用邮箱发送（QQ邮箱通过 mailto 触发客户端，或用同步端点）
+    sendResetEmail(email, code).then(function(ok){
+      fgShowResetForm(uname, ok);
+    });
+  }else{
+    // 学生/家长：需要管理员生成的验证码
+    var stored=localStorage.getItem('sw_reset_'+uname);
+    var valid=stored?JSON.parse(stored):null;
+    fgShowResetForm(uname, false, !valid);
+  }
+}
+function fgShowResetForm(uname, emailSent, needAdmin){
+  var tip=needAdmin?'请联系管理员获取验证码后填写：':
+         (emailSent?'✅ 验证码已发送至 '+uname+' 邮箱，请查收（若未收到，请检查垃圾邮件或点下方重发）：':'请填写收到的验证码：');
+  document.getElementById('forgotTip').textContent=tip;
+  document.getElementById('forgotBody').innerHTML=
+    '<div class="form-group"><label>用户名</label><input type="text" id="fgU2" value="'+uname+'" readonly style="width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px;background:#f5f7fa"></div>'+
+    '<div class="form-group"><label>验证码</label><input type="text" id="fgCode" placeholder="请输入验证码" inputmode="numeric" style="width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px;letter-spacing:3px"></div>'+
+    '<div class="form-group"><label>新密码（至少4位）</label><input type="password" id="fgPwd1" placeholder="设置新密码" style="width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px"></div>'+
+    '<div class="form-group"><label>确认新密码</label><input type="password" id="fgPwd2" placeholder="再次输入新密码" style="width:100%;padding:12px 14px;border:2px solid var(--border);border-radius:12px;font-size:15px"></div>'+
+    '<button type="button" class="btn btn-primary" onclick="fgReset()">重置密码</button>';
+  window._fgUser=uname;
+}
+function fgReset(){
+  var uname=window._fgUser;
+  var code=(document.getElementById('fgCode').value||'').trim();
+  var p1=document.getElementById('fgPwd1').value;
+  var p2=document.getElementById('fgPwd2').value;
+  if(!code){ fgLog('请输入验证码','off'); return; }
+  if(p1.length<4){ fgLog('新密码至少4位','off'); return; }
+  if(p1!==p2){ fgLog('两次密码不一致','off'); return; }
+  var stored=localStorage.getItem('sw_reset_'+uname);
+  var data=stored?JSON.parse(stored):null;
+  if(!data){ fgLog('验证码不存在，请重新获取','off'); return; }
+  if(Date.now()>data.expire){ fgLog('验证码已过期，请重新获取','off'); return; }
+  if(String(data.code)!==code){ fgLog('验证码错误，请重试','off'); return; }
+  var users=loadUsers();
+  if(!users[uname]){ fgLog('用户不存在','off'); return; }
+  users[uname].password=simpleHash(p1);
+  saveUsers(users);
+  localStorage.removeItem('sw_reset_'+uname);
+  fgLog('✅ 密码已重置，请用新密码登录','ok');
+  document.getElementById('forgotBody').innerHTML='';
+  setTimeout(function(){ closeForgotModal(); },1500);
+}
+/* 发送重置验证码邮件：优先走云端同步端点（Supabase 无邮箱服务时降级），
+/* 发送重置验证码邮件：优先 EmailJS 自动发送，未配置时降级 mailto + 云端日志 */
+function _ejConfig(){
+  try{ return JSON.parse(localStorage.getItem('sw_emailjs'))||{}; }catch(e){ return {}; }
+}
+function sendResetEmail(email, code){
+  return new Promise(function(resolve){
+    try{
+      // 验证码同时写入云端（管理员多设备可查，双重保障）
+      var users=loadUsers();
+      var admin=users[email]||{};
+      if(!admin.data) admin.data={};
+      admin.data._resetCode={code:code,expire:Date.now()+30*60*1000};
+      users[email]=admin; saveUsers(users);
+      // EmailJS 自动发送（配置在管理端「账户设置-邮件发送服务」填写）
+      var cfg=_ejConfig();
+      var configured=cfg.serviceId && cfg.templateId && cfg.publicKey && window.emailjs;
+      if(configured){
+        emailjs.init({publicKey:cfg.publicKey});
+        emailjs.send(cfg.serviceId, cfg.templateId, {
+          // EmailJS 内置默认变量（与"密码重置"预设模板兼容，To Email 直接用 {{email}}）
+          email: email,       // {{email}} - 收件人邮箱
+          to_name: email,     // {{to_name}} - 收件人显示名
+          // 自定义变量（在模板正文里用 {{reset_code}} {{subject}} 引用）
+          reset_code: code,
+          subject: '【智慧学习平台】密码重置验证码'
+        }).then(function(){
+          resolve(true);
+        }).catch(function(err){
+          console.warn('EmailJS 发送失败，降级 mailto:',err);
+          resolve(mailtoFallback(email,code));
+        });
+      }else{
+        // 未配置 EmailJS：降级 mailto（唤起本机邮件客户端）
+        resolve(mailtoFallback(email,code));
+      }
+    }catch(e){ resolve(mailtoFallback(email,code)); }
+  });
+}
+function mailtoFallback(email, code){
+  try{
+    var body=encodeURIComponent('您的智慧学习平台密码重置验证码为：'+code+'（30分钟内有效）。如果这不是您本人的操作，请忽略。');
+    var subject=encodeURIComponent('【智慧学习平台】密码重置验证码');
+    var a=document.createElement('a');
+    a.href='mailto:'+email+'?subject='+subject+'&body='+body;
+    a.style.display='none'; document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ try{document.body.removeChild(a);}catch(e){} },100);
+    return true;
+  }catch(e){ return false; }
+}
+function fgNeedAdmin(){ /* 预留 */ }
+
+// ===== 路由：按角色载入对应页面（同一网址）=====
+function showApp(role){
+  document.getElementById('loginScreen').style.display='none';
+  var frame=document.getElementById('appFrame');
+  frame.src = (role==='student') ? 'learning.html' : 'admin.html';
+  frame.style.display='block';
+}
+
+function doLogin(){
+  hideAlert();
+  var username=document.getElementById('username').value.trim();
+  var password=document.getElementById('password').value;
+  if(!username||!password){ showAlert('请输入用户名和密码','error'); return; }
+  setLoading('loginBtn',true);
+  setTimeout(function(){
+    try{
+      var users=loadUsers();
+      var user=users[username];
+      if(!user){
+        // 如果云端同步尚未完成，可能是注册在其他设备的用户还没拉取到本地
+        if(window.SyncHub && !window.SyncHub._firstPullDone){
+          showAlert('⏳ 正在从云端同步数据，请等待几秒后重试…','error');
+        }else{
+          showAlert('用户不存在，请先注册','error');
+        }
+        setLoading('loginBtn',false); return;
+      }
+      if(user.password!==simpleHash(password)){ showAlert('密码错误，请重试','error'); setLoading('loginBtn',false); return; }
+      saveSession({username:username,displayName:user.displayName,role:user.role,stage:user.stage||'',grade:user.grade||'',semester:user.semester||'上',loginAt:Date.now()});
+      setLoading('loginBtn',false);
+      showApp(user.role);
+    }catch(e){ showAlert('登录失败，请刷新重试','error'); setLoading('loginBtn',false); }
+  },300);
+}
+
+function doRegister(){
+  hideAlert();
+  var username=document.getElementById('regUsername').value.trim();
+  var displayName=document.getElementById('regDisplayName').value.trim();
+  var password=document.getElementById('regPassword').value;
+  var password2=document.getElementById('regPassword2').value;
+  if(!username||!displayName||!password||!password2){ showAlert('请填写所有字段','error'); return; }
+  if(username.length<2||username.length>20){ showAlert('用户名需2-20个字符','error'); return; }
+  if(!/^[一-龥a-zA-Z0-9_]+$/.test(username)){ showAlert('用户名只能含中文、英文、数字、下划线','error'); return; }
+  if(password.length<4){ showAlert('密码至少4位','error'); return; }
+  if(password!==password2){ showAlert('两次密码不一致','error'); return; }
+  var invInput=(document.getElementById('regInvite').value||'').trim();
+  var realCode=(localStorage.getItem('sw_invite_code')||'').trim();
+  if(!invInput){ showAlert('请填写注册邀请码','error'); return; }
+  if(invInput!==realCode){ showAlert('邀请码错误，请向管理员获取正确的 4 位邀请码','error'); return; }
+  var users=loadUsers();
+  if(users[username]){ showAlert('该用户名已被注册','error'); return; }
+  var user={password:simpleHash(password),role:'student',displayName:displayName};
+  var stage=document.getElementById('regStage').value;
+  var grade=document.getElementById('regGrade').value;
+  user.stage=stage; user.grade=grade; user.semester='上';
+  setLoading('regBtn',true);
+  setTimeout(function(){
+    try{
+      users[username]=user; saveUsers(users);
+      saveSession({username:username,displayName:displayName,role:'student',stage:user.stage||'',grade:user.grade||'',semester:'上',loginAt:Date.now()});
+      setLoading('regBtn',false);
+      showApp('student');
+    }catch(e){ showAlert('注册失败，请刷新重试','error'); setLoading('regBtn',false); }
+  },300);
+}
+
+document.addEventListener('DOMContentLoaded', function(){
+  try{
+    initDefaultUsers();
+    document.getElementById('loginBtn').addEventListener('click', function(e){ e.preventDefault(); doLogin(); });
+    document.getElementById('regBtn').addEventListener('click', function(e){ e.preventDefault(); doRegister(); });
+    document.getElementById('password').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); doLogin(); } });
+    document.getElementById('regPassword2').addEventListener('keydown', function(e){ if(e.key==='Enter'){ e.preventDefault(); doRegister(); } });
+    var regStage=document.getElementById('regStage');
+    regStage.addEventListener('change', function(){
+      var stage=this.value;
+      var gradeMap={'小学':['一年级','二年级','三年级','四年级','五年级','六年级'],'初中':['七年级','八年级','九年级'],'高中':['高一','高二','高三']};
+      var grades=gradeMap[stage]||[];
+      document.getElementById('regGrade').innerHTML=grades.map(function(g){ return '<option value="'+g+'">'+g+'</option>'; }).join('');
+    });
+    var s=getSession();
+    if(s && s.role && (Date.now()-s.loginAt < 86400000*7)){ showApp(s.role); }
+  }catch(e){ console.error(e); }
+});
+</script>
+</body>
+</html>

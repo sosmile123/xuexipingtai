@@ -1,0 +1,1042 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>学生工作台 - 家长 / 管理端</title>
+  <script src="chart.umd.min.js"></script>
+  <script src="textbook.js"></script>
+  <script src="sync.js"></script>
+  <script src="email.min.js"></script>
+<style>
+:root{--bg:#f0f4ff;--card:#fff;--text:#2a2d3a;--text2:#6b7280;--text3:#9ca3af;--pri:#5b8def;--pri-hover:#4a7de0;--grn:#34c759;--org:#ff9f0a;--border:#e8ecf4;--sh:0 8px 30px rgba(20,30,60,.08);--radius:16px;--surface2:#f5f7fb}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);min-height:100vh;-webkit-font-smoothing:antialiased}
+.layout{display:flex;min-height:100vh}
+.sidebar{width:220px;background:#fff;border-right:1px solid var(--border);padding:20px 0;position:sticky;top:0;height:100vh;overflow-y:auto}
+.brand{padding:0 20px 18px;font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+.nav-item{display:flex;align-items:center;gap:10px;padding:12px 20px;cursor:pointer;color:var(--text2);font-size:14px;transition:.15s;border-left:3px solid transparent}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:#eef3ff;color:var(--pri);border-left-color:var(--pri);font-weight:600}
+.nav-icon{font-size:18px}
+.main{flex:1;padding:28px;max-width:1000px;margin:0 auto;width:100%}
+.user-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:20px}
+.user-name{font-weight:700;font-size:16px;flex:1}
+.mobile-menu-btn{display:none;background:#fff;border:1px solid var(--border);color:var(--text);font-size:20px;line-height:1;width:38px;height:38px;border-radius:10px;cursor:pointer;font-family:inherit;flex-shrink:0;align-items:center;justify-content:center}
+.mobile-menu-btn:active{background:var(--surface2)}
+.btn-logout{background:#fff;border:1px solid var(--border);color:var(--text2);padding:8px 16px;border-radius:10px;cursor:pointer;font-size:13px}
+.btn-logout:hover{border-color:var(--pri);color:var(--pri)}
+.page{display:none;animation:fade .2s}
+.page.active{display:block}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.page-header h2{font-size:22px;margin-bottom:4px}
+.page-header p{color:var(--text2);font-size:13px;margin-bottom:20px}
+.panel{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:22px;margin-bottom:20px;box-shadow:var(--sh)}
+.panel h3{font-size:16px;margin-bottom:14px}
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px;text-align:center;box-shadow:var(--sh)}
+.stat-card .icon{font-size:28px}
+.stat-card .value{font-size:26px;font-weight:800;margin:6px 0 2px}
+.stat-card .label{font-size:12px;color:var(--text2)}
+.accent-primary .value{color:var(--pri)}.accent-orange .value{color:var(--org)}.accent-green .value{color:var(--grn)}
+.form-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.form-row input,.form-row select{padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;background:#fafbfd}
+.form-control{padding:10px 14px;border:1px solid var(--border);border-radius:8px;font-size:14px;width:100%;font-family:inherit;background:#fafbfd}
+.form-group{margin-bottom:14px}
+.form-group label{display:block;font-size:13px;color:var(--text2);margin-bottom:6px;font-weight:500}
+.btn{padding:11px 18px;border:none;border-radius:10px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;transition:.15s}
+.btn-primary{background:var(--pri);color:#fff}
+.btn-primary:hover{background:var(--pri-hover)}
+.btn-outline{background:#fff;border:1px solid var(--border);color:var(--text2)}
+.btn-outline:hover{border-color:var(--pri);color:var(--pri)}
+.btn-danger{background:#ff3b30;color:#fff}
+.btn-sm{padding:6px 12px;font-size:12px}
+.form-row-full input{width:100%}
+.user-list-table{width:100%;border-collapse:collapse;font-size:13px}
+.user-list-table th,.user-list-table td{padding:10px 8px;text-align:left;border-bottom:1px solid var(--border)}
+.user-list-table th{color:var(--text2);font-weight:600;font-size:12px}
+.member-tag{display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;border:1px solid var(--border)}
+.member-tag.student{color:var(--pri);border-color:var(--pri)}
+.member-tag.parent{color:var(--org);border-color:var(--org)}
+.member-tag.admin{color:#764ba2;border-color:#764ba2}
+.action-btns{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.btn-link{background:none;border:none;color:var(--pri);cursor:pointer;font-size:12px;padding:4px 6px}
+.btn-delete{background:none;border:none;color:#ff3b30;cursor:pointer;font-size:12px;padding:4px 6px}
+.family-card{background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:12px}
+.family-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.family-name{font-weight:700}
+.family-members{display:flex;gap:8px;flex-wrap:wrap}
+.empty-state{text-align:center;padding:30px;color:var(--text3)}
+.student-card{background:var(--surface2);border-radius:12px;padding:14px;margin-bottom:12px;cursor:pointer}
+.student-card:hover{outline:2px solid var(--pri)}
+.modal-overlay{position:fixed;inset:0;background:rgba(20,30,60,.45);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+.modal-overlay.show{display:flex}
+.modal-box{background:#fff;border-radius:16px;padding:24px;width:100%;max-width:440px;box-shadow:var(--sh)}
+.admin-badge{display:inline-block;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;font-size:11px;padding:2px 8px;border-radius:10px;margin-left:6px}
+.alert{padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:14px;display:none}
+.alert-error{background:#ffe8e6;color:#d32f2f;border:1px solid #ffcdd2;display:block}
+/* ===== 移动端适配（抽屉侧边栏 + 表格横向滚动 + 紧凑布局）===== */
+@media(max-width:768px){
+  .layout{flex-direction:column}
+  .sidebar{position:fixed;left:0;top:0;bottom:0;width:270px;z-index:999;transform:translateX(-100%);transition:transform .28s ease;height:100vh;box-shadow:2px 0 20px rgba(0,0,0,.14);overflow-y:auto}
+  .sidebar.open{transform:translateX(0)}
+  .sidebar-overlay{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:998;display:none}
+  .sidebar-overlay.show{display:block}
+  .brand{padding:16px 18px 12px;font-size:17px}
+  .nav-item{padding:12px 18px}
+  .main{padding:14px;max-width:100%;width:100%}
+  .page-header h2{font-size:18px}
+  .mobile-menu-btn{display:inline-flex}
+  .user-bar{padding:4px 2px 12px}
+  .panel{padding:14px;border-radius:12px;margin-bottom:12px}
+  .panel h3{font-size:14.5px;margin-bottom:10px}
+  .user-list-table{min-width:560px}
+  .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--border);border-radius:10px}
+  .form-row input,.form-row select{padding:10px 12px;font-size:15px}
+  .form-control{font-size:15px}
+  .btn{padding:12px 16px;font-size:14px}
+  .btn-sm{padding:8px 14px;font-size:13px}
+  .stats-grid{grid-template-columns:repeat(3,1fr);gap:8px}
+  .stat-card{padding:12px 8px}
+  .stat-card .value{font-size:20px}
+  .stat-card .icon{font-size:20px}
+  .stat-card .label{font-size:11px}
+  .modal-box{padding:18px;border-radius:14px;max-width:94%;max-height:86vh;overflow-y:auto}
+  .empty-state{padding:18px;font-size:13px}
+}
+/* 桌面端保留原侧边栏 */
+@media(min-width:769px){.sidebar-overlay{display:none !important}}
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="closeSidebar()"></div>
+  <div class="sidebar" id="sidebar">
+    <div class="brand">📚 智慧学习平台</div>
+    <div class="nav-item active" data-page="parent" id="nav-parent"><span class="nav-icon">👨‍👩‍👧</span> 家长管理</div>
+    <div class="nav-item" data-page="parentScores"><span class="nav-icon">📈</span> 学习成绩</div>
+    <div class="nav-item" data-page="parentProgress"><span class="nav-icon">📚</span> 学习进度</div>
+    <div class="nav-item" data-page="parentPublisher"><span class="nav-icon">📕</span> 教材设置</div>
+    <div class="nav-item" data-page="parentRewards"><span class="nav-icon">🏆</span> 积分奖励</div>
+    <div class="nav-item" data-page="adminUsers" id="nav-adminUsers" style="display:none"><span class="nav-icon">👥</span> 用户管理</div>
+    <div class="nav-item" data-page="familyMgmt" id="nav-familyMgmt" style="display:none"><span class="nav-icon">🏠</span> 家庭管理</div>
+    <div class="nav-item" data-page="settings"><span class="nav-icon">⚙️</span> 账户设置</div>
+  </div>
+  <div class="main">
+    <div class="user-bar">
+      <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="openSidebar()" aria-label="菜单">☰</button>
+      <div class="user-name" id="userName">家长</div>
+      <button class="btn-logout" onclick="doLogout()">退出登录</button>
+    </div>
+
+    <!-- 家长管理 -->
+    <div class="page active" id="page-parent">
+      <div class="page-header"><h2>👨‍👩‍👧 家长管理</h2><p>管理孩子的学习、作业与积分兑换</p></div>
+      <div id="parentNotReady" class="panel" style="display:none"><p style="text-align:center;color:var(--text2);padding:20px;">请先在「家庭管理」中创建家庭并把孩子加入，即可在此管理。</p></div>
+      <div id="parentReady" style="display:none">
+        <div class="panel"><h3>🏠 我的家庭</h3><div id="parentFamilyInfo"></div></div>
+        <div class="panel"><h3>👦 家庭成员（学生）</h3><div id="parentStudentList"></div></div>
+        <div class="panel" id="parentStudentDetail" style="display:none">
+          <h3 id="parentStuName" style="margin:0 0 12px"></h3>
+          <div id="parentStuBody"></div>
+          <button class="btn btn-sm btn-primary" onclick="openParentHwModal()">📝 布置作业</button>
+          <button class="btn btn-sm btn-outline" onclick="parentRefreshStudent()">🔄 刷新</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 用户管理（仅管理员）-->
+    <div class="page" id="page-adminUsers">
+      <div class="page-header"><h2>👥 用户管理 <span class="admin-badge">仅管理员</span></h2><p>管理系统中的所有学生和家长账户</p></div>
+      <div class="stats-grid">
+        <div class="stat-card accent-primary"><div class="icon">🎒</div><div class="value" id="adminStudentCount">0</div><div class="label">学生数</div></div>
+        <div class="stat-card accent-orange"><div class="icon">👨‍👩‍👧</div><div class="value" id="adminParentCount">0</div><div class="label">家长数</div></div>
+        <div class="stat-card accent-green"><div class="icon">🏠</div><div class="value" id="adminFamilyCount">0</div><div class="label">家庭数</div></div>
+      </div>
+      <div class="panel"><h3>📋 全部用户列表</h3>
+        <div class="table-scroll"><table class="user-list-table"><thead><tr><th>用户名</th><th>显示名</th><th>角色</th><th>年级</th><th>所属家庭</th><th>操作</th></tr></thead>
+        <tbody id="adminUserBody"></tbody></table></div>
+      </div>
+      <div class="panel"><h3>➕ 快速添加用户</h3>
+        <div class="form-row">
+          <input type="text" id="admAddUser" placeholder="用户名">
+          <select id="admAddRole"><option value="student">学生</option><option value="parent">家长</option></select>
+        </div>
+        <div class="form-row">
+          <input type="text" id="admAddName" placeholder="显示名称">
+          <input type="password" id="admAddPwd" placeholder="初始密码" value="1234">
+        </div>
+        <button class="btn btn-primary" onclick="_adminAddUser()">添加用户</button>
+      </div>
+      <div class="panel">
+        <h3>🔑 注册邀请码（4 位）</h3>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:10px">新账号注册时必须填写此邀请码。管理员可随时修改，修改后旧码立即失效。</p>
+        <div class="form-row">
+          <input type="text" id="admInviteCode" placeholder="输入新的 4 位数字" maxlength="4" inputmode="numeric" style="letter-spacing:2px">
+          <button class="btn btn-primary" onclick="_adminChangeInviteCode()">保存邀请码</button>
+        </div>
+        <div id="admInviteHint" style="font-size:12px;color:var(--grn);margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- 家庭管理（仅管理员）-->
+    <div class="page" id="page-familyMgmt">
+      <div class="page-header"><h2>🏠 家庭管理 <span class="admin-badge">组织家庭单位</span></h2><p>将家长和学生关联为同一个家庭，方便统一管理</p></div>
+      <div class="panel"><h3>➕ 创建新家庭</h3>
+        <div class="form-row-full" style="margin-bottom:10px"><input type="text" id="famName" placeholder="家庭名称（如：张家、小明家）"></div>
+        <div id="famMemberPicker" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+        <button class="btn btn-primary" onclick="_createFamily()">创建家庭</button>
+      </div>
+      <div class="panel"><h3>📦 已有家庭</h3><div id="familyListContainer"></div></div>
+    </div>
+
+    <!-- 账户设置 -->
+    <div class="page" id="page-settings">
+      <div class="page-header"><h2>⚙️ 账户设置</h2><p>修改当前账号密码</p></div>
+      <div class="panel">
+        <h3>🔒 修改密码</h3>
+        <div class="form-group"><label>当前密码</label><input type="password" id="accOldPwd" class="form-control" placeholder="当前密码"></div>
+        <div class="form-group"><label>新密码（至少4位）</label><input type="password" id="accNewPwd" class="form-control" placeholder="新密码"></div>
+        <div class="form-group"><label>确认新密码</label><input type="password" id="accNewPwd2" class="form-control" placeholder="再次输入新密码"></div>
+        <button class="btn btn-primary" onclick="changeAccountPassword()">修改密码</button>
+      </div>
+      <div class="panel" id="emailConfigPanel" style="display:none">
+        <h3>📧 邮件发送服务（EmailJS）</h3>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:10px">用于「忘记密码」时自动发送验证码到管理员邮箱。免费额度 200 封/月，无需后端。支持 QQ / 126 / 163 / Gmail 等所有带 SMTP 的邮箱。</p>
+        <details style="margin-bottom:12px;font-size:12px;color:var(--text3);background:#f8fafd;border:1px solid var(--border);border-radius:8px;padding:8px 12px">
+          <summary style="cursor:pointer;font-weight:600;color:var(--text2)">📋 126邮箱配置步骤（点击展开）</summary>
+          <div style="margin-top:8px;line-height:1.8">
+            <b>第1步</b>：登录 <a href="https://www.emailjs.com" target="_blank">emailjs.com</a> 注册免费账号<br>
+            <b>第2步</b>：126邮箱开启 SMTP — 登录126邮箱 → 设置 → POP3/SMTP/IMAP → 开启「SMTP服务」→ 按提示用手机发短信获取<b>授权码</b><br>
+            <b>第3步</b>：EmailJS 左侧 <b>Email Services</b> → Add New Service → 选 <b>Custom SMTP</b>（或网易类）→ 填写：<br>
+            &nbsp;&nbsp;• Host: <code>smtp.126.com</code><br>
+            &nbsp;&nbsp;• Port: <code>465</code>（SSL）<br>
+            &nbsp;&nbsp;• Username: 你的126邮箱地址<br>
+            &nbsp;&nbsp;• Password: <b>授权码</b>（不是登录密码！）<br>
+            &nbsp;&nbsp;→ 保存后得到 <b>Service ID</b><br>
+            <b>第4步</b>：EmailJS 左侧 <b>Email Templates</b> → 新建模板，填：<br>
+            &nbsp;&nbsp;• To Email: <code>{{to_email}}</code><br>
+            &nbsp;&nbsp;• Subject: <code>{{subject}}</code><br>
+            &nbsp;&nbsp;• Content: <code>您的验证码：{{reset_code}}（30分钟内有效）</code><br>
+            &nbsp;&nbsp;→ 保存后得到 <b>Template ID</b><br>
+            <b>第5步</b>：EmailJS 左侧 <b>Account</b> → 复制 <b>Public Key</b><br>
+            <b>第6步</b>：把三个 key 填到下方 → 保存 → 发送测试邮件验证
+          </div>
+        </details>
+        <div class="form-group"><label>Service ID</label><input type="text" id="ejServiceId" class="form-control" placeholder="如：service_xxxxxxx"></div>
+        <div class="form-group"><label>Template ID</label><input type="text" id="ejTemplateId" class="form-control" placeholder="如：template_xxxxxxx"></div>
+        <div class="form-group"><label>Public Key</label><input type="text" id="ejPublicKey" class="form-control" placeholder="如：AbC123_xxxxx"></div>
+        <button class="btn btn-primary" onclick="saveEmailConfig()">保存配置</button>
+        <button class="btn btn-outline" style="margin-left:8px" onclick="testEmailConfig()">发送测试邮件</button>
+        <div id="ejStatus" style="font-size:12px;color:var(--grn);margin-top:8px"></div>
+      </div>
+    </div>
+
+    <!-- 学习成绩（家长录入/查看/修改）-->
+    <div class="page" id="page-parentScores"></div>
+    <!-- 学习进度（按学科调整，与学校对齐）-->
+    <div class="page" id="page-parentProgress"></div>
+    <!-- 教材设置（出版社）-->
+    <div class="page" id="page-parentPublisher"></div>
+
+    <!-- 积分奖励管理 -->
+    <div class="page" id="page-parentRewards"></div>
+  </div>
+</div>
+
+<!-- 布置作业弹窗 -->
+<div class="modal-overlay" id="parentHwModal">
+  <div class="modal-box">
+    <h3 style="margin-bottom:14px">📝 布置作业</h3>
+    <div class="form-group"><label>科目</label><input id="hwSubject" class="form-control" placeholder="如：数学"></div>
+    <div class="form-group"><label>内容</label><textarea id="hwContent" class="form-control" rows="3" placeholder="作业内容"></textarea></div>
+    <div class="form-group"><label>奖励积分</label><input id="hwPoints" class="form-control" type="number" value="10" style="width:120px"></div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:10px">
+      <button class="btn btn-outline" onclick="closeParentHwModal()">取消</button>
+      <button class="btn btn-primary" onclick="parentSaveHomework()">布置</button>
+    </div>
+  </div>
+</div>
+
+<!-- 编辑用户弹窗（显示名/学段/年级/学期） -->
+<div class="modal-overlay" id="editUserModal">
+  <div class="modal-box">
+    <h3 style="margin-bottom:14px">✏️ 编辑用户资料</h3>
+    <div id="editUserInfo" style="font-size:12px;color:var(--text2);margin-bottom:12px"></div>
+    <div class="form-group"><label>显示名称</label><input id="euDisplayName" class="form-control" placeholder="显示名称"></div>
+    <div id="euGradeFields" style="display:none">
+      <div class="form-row" style="margin-bottom:12px">
+        <select id="euStage" onchange="_euStageChanged()" style="flex:1"><option value="小学">小学</option><option value="初中">初中</option><option value="高中">高中</option></select>
+        <select id="euGrade" style="flex:1"></select>
+      </div>
+      <div class="form-group"><label>学期</label>
+        <select id="euSemester" class="form-control" style="max-width:120px"><option value="上">上学期</option><option value="下">下学期</option></select>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+      <button class="btn btn-outline" onclick="closeEditUserModal()">取消</button>
+      <button class="btn btn-primary" onclick="_adminSaveEditUser()">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== 会话与用户库（与登录端共用 localStorage）=====
+const SESSION_KEY='sw_session';
+function getSession(){ try{ return JSON.parse(localStorage.getItem(SESSION_KEY)); }catch(e){ return null; } }
+function _accSaveSession(s){ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function clearSession(){ localStorage.removeItem(SESSION_KEY); }
+function _accGetUsers(){ try{ return JSON.parse(localStorage.getItem('sw_users'))||{}; }catch(e){ return {}; } }
+function _accSaveUsers(db){ localStorage.setItem('sw_users', JSON.stringify(db)); }
+function _accLoadUsers(){ return _accGetUsers(); }
+function _accHash(str){ var h=0; str=String(str); for(var i=0;i<str.length;i++){ h=(h<<5)-h+str.charCodeAt(i); h|=0; } return 'h'+h; }
+function simpleHash(str){ var hash=0; str=String(str); for(var i=0;i<str.length;i++){ var c=str.charCodeAt(i); hash=((hash<<5)-hash)+c; hash|=0; } return 'h_'+Math.abs(hash).toString(36); }
+
+var session=getSession();
+var isAdminMode=false;
+function isAdminSession(){ return session && (session.role==='admin'||isAdminMode); }
+
+// 无会话则回到统一入口
+if(!session || !session.role){ window.top.location.href='index.html'; }
+
+function doLogout(){ clearSession(); window.top.location.href='index.html'; }
+
+/* ===== 移动端抽屉侧边栏 ===== */
+function openSidebar(){
+  var sb=document.getElementById('sidebar'); if(sb) sb.classList.add('open');
+  var ov=document.getElementById('sidebarOverlay'); if(ov) ov.classList.add('show');
+}
+function closeSidebar(){
+  var sb=document.getElementById('sidebar'); if(sb) sb.classList.remove('open');
+  var ov=document.getElementById('sidebarOverlay'); if(ov) ov.classList.remove('show');
+}
+function showAlert(m){ var b=document.getElementById('accAlert'); if(b){ b.textContent=m; b.className='alert alert-error'; } }
+
+// ===== 导航 =====
+function switchPage(id){
+  var pages=document.querySelectorAll('.page'); for(var i=0;i<pages.length;i++) pages[i].classList.remove('active');
+  var p=document.getElementById('page-'+id); if(p) p.classList.add('active');
+  var navs=document.querySelectorAll('.nav-item'); for(var j=0;j<navs.length;j++){ navs[j].classList.toggle('active', navs[j].getAttribute('data-page')===id); }
+  if(id==='adminUsers') _renderAdminUsers(document.getElementById('page-adminUsers'));
+  if(id==='familyMgmt') _renderFamilyMgmt(document.getElementById('page-familyMgmt'));
+  if(id==='parent') loadParentPage();
+  if(id==='parentScores') renderParentScoresPage();
+  if(id==='parentProgress') renderParentProgressPage();
+  if(id==='parentPublisher') renderParentPublisherPage();
+  if(id==='parentRewards') renderParentRewardsPage();
+  _curPage=id;
+  closeSidebar();
+}
+var navItems=document.querySelectorAll('.nav-item');
+for(var ni=0;ni<navItems.length;ni++){ navItems[ni].addEventListener('click', function(){ switchPage(this.getAttribute('data-page')); }); }
+
+// ===== 管理员：用户管理 =====
+function _renderAdminUsers(el){
+  if(!isAdminSession()){ el.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">⛔ 仅管理员可访问</div>'; return; }
+  _renderInviteCode();
+  var users=_accGetUsers();
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  var students=[],parents=[];
+  var unames=Object.keys(users);
+  for(var i=0;i<unames.length;i++){ var u=users[unames[i]]; if(u.role==='student') students.push(unames[i]); else if(u.role==='parent') parents.push(unames[i]); }
+  document.getElementById('adminStudentCount').textContent=students.length;
+  document.getElementById('adminParentCount').textContent=parents.length;
+  document.getElementById('adminFamilyCount').textContent=Object.keys(families).length;
+  var tbody='';
+  for(var j=0;j<unames.length;j++){
+    var uname=unames[j]; var usr=users[uname];
+    var isAdminUser=(usr.role==='admin');
+    var famName='未分配';
+    for(var fk in families){ if(families[fk].members && families[fk].members.indexOf(uname)>=0){ famName=fk; break; } }
+    var famOpts='<option value="">— 未分配 —</option>';
+    for(var fk2 in families){ famOpts+='<option value="'+fk2+'"'+(famName===fk2?' selected':'')+'>'+fk2+'</option>'; }
+    tbody+='<tr>';
+    tbody+='<td><strong>'+uname+'</strong>'+(isAdminUser?' <span style="font-size:11px;color:var(--org)">👑管理员</span>':'')+'</td>';
+    tbody+='<td>'+(usr.displayName||'-')+'</td>';
+    if(isAdminUser){
+      tbody+='<td><span style="font-size:12px;color:var(--text2)">👑 管理员</span></td>';
+    }else{
+      tbody+='<td><select onchange="_adminSetRole(\''+uname+'\', this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer"><option value="student"'+(usr.role==='student'?' selected':'')+'>🎒 学生</option><option value="parent"'+(usr.role==='parent'?' selected':'')+'>👨‍👩‍👧 家长</option></select></td>';
+    }
+    tbody+='<td>'+((usr.stage||'')+(usr.grade?((usr.stage?' · ':'')+usr.grade):(usr.stage?'':'—')))+'</td>';
+    tbody+='<td>'+famName+'</td>';
+    tbody+='<td class="action-btns">';
+    if(isAdminUser){
+      tbody+='<button class="btn-link" onclick="_adminEditUser(\''+uname+'\')" title="编辑显示名">✏️ 编辑</button>';
+      tbody+='<button class="btn-link" onclick="_adminChangePwd(\''+uname+'\')" title="修改密码">🔑 改密</button>';
+    }else{
+      tbody+='<select onchange="_adminAssignFamily(\''+uname+'\', this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer;margin-right:4px">'+famOpts+'</select>';
+      tbody+='<button class="btn-link" onclick="_adminEditUser(\''+uname+'\')" title="编辑显示名/年级">✏️ 编辑</button>';
+      tbody+='<button class="btn-link" onclick="_adminChangePwd(\''+uname+'\')" title="修改密码">🔑 改密</button>';
+      tbody+='<button class="btn-link" onclick="_adminGenResetCode(\''+uname+'\')" title="生成重置密码验证码">🔐 验证码</button>';
+      tbody+='<button class="btn-delete" onclick="_adminDeleteUser(\''+uname+'\')">删除</button>';
+    }
+    tbody+='</td>';
+    tbody+='</tr>';
+  }
+  document.getElementById('adminUserBody').innerHTML=tbody||'<tr><td colspan="6" style="text-align:center;color:var(--text3)">暂无用户</td></tr>';
+}
+function _adminAddUser(){
+  var username=document.getElementById('admAddUser').value.trim();
+  var role=document.getElementById('admAddRole').value;
+  var displayName=document.getElementById('admAddName').value.trim();
+  var pwd=document.getElementById('admAddPwd').value||'1234';
+  if(!username||!displayName){ alert('请填写用户名和显示名称'); return; }
+  var users=_accGetUsers();
+  if(users[username]){ alert('用户名已存在'); return; }
+  var newUser={password:simpleHash(pwd),role:role,displayName:displayName};
+  if(role==='student'){ newUser.stage='小学'; newUser.grade='二年级'; newUser.semester='上'; }
+  users[username]=newUser; _accSaveUsers(users);
+  document.getElementById('admAddUser').value=''; document.getElementById('admAddName').value='';
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+  alert('✅ 用户 '+username+' 已创建');
+}
+function _adminDeleteUser(username){
+  var users=_accGetUsers(); var target=users[username];
+  if(target && target.role==='admin'){ alert('⛔ 管理员账号不可删除'); return; }
+  if(session && session.username===username){ alert('⛔ 不能删除当前登录的账号'); return; }
+  if(!confirm('确定删除用户 '+username+'？')) return;
+  delete users[username]; _accSaveUsers(users);
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+  _renderFamilyMgmt(document.getElementById('page-familyMgmt'));
+  alert('已删除用户 '+username);
+}
+function _adminSetRole(username,role){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  if(role!=='student'&&role!=='parent') return;
+  var users=_accGetUsers(); if(!users[username]) return;
+  if(users[username].role==='admin'){ alert('⛔ 管理员账号不可改角色'); return; }
+  users[username].role=role;
+  if(role==='student'&&!users[username].stage){ users[username].stage='小学'; users[username].grade='二年级'; users[username].semester='上'; }
+  _accSaveUsers(users); alert('✅ '+username+' 已设为'+(role==='student'?'学生':'家长'));
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+}
+function _adminChangePwd(username){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  var users=_accGetUsers(); if(!users[username]) return;
+  var newPwd=prompt('为用户「'+username+'」设置新密码（至少4位）：'); if(!newPwd) return;
+  if(newPwd.length<4){ alert('密码至少4位'); return; }
+  users[username].password=simpleHash(newPwd); _accSaveUsers(users); alert('✅ '+username+' 的密码已修改');
+}
+
+/* 管理员：为学生/家长生成重置密码验证码（30分钟有效） */
+function _adminGenResetCode(username){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  var users=_accGetUsers(); if(!users[username]) return;
+  if(users[username].role==='admin'){ alert('管理员账号的验证码会发送到其邮箱，无需在此生成'); return; }
+  var code=String(Math.floor(100000+Math.random()*900000)); // 6位
+  var expire=Date.now()+30*60*1000;
+  localStorage.setItem('sw_reset_'+username, JSON.stringify({code:code,expire:expire}));
+  var u=users[username];
+  alert('✅ 已为「'+(u.displayName||username)+'」生成重置验证码：\n\n🔐 '+code+'\n\n⏱ 30分钟内有效\n请把验证码告诉该用户，他在登录页点「忘记密码」→ 输入用户名和此验证码即可重置密码。');
+}
+
+// ===== 管理员：编辑用户显示名 / 学段 / 年级 / 学期 =====
+var _euUsername='';
+var GRADE_MAP={'小学':['一年级','二年级','三年级','四年级','五年级','六年级'],'初中':['七年级','八年级','九年级'],'高中':['高一','高二','高三']};
+function _euGradeOptions(stage, selected){
+  var opts=GRADE_MAP[stage]||[];
+  return '<option value="">— 选择年级 —</option>'+opts.map(function(g){ return '<option value="'+g+'"'+(g===selected?' selected':'')+'>'+g+'</option>'; }).join('');
+}
+function _euStageChanged(){
+  var stage=document.getElementById('euStage').value;
+  document.getElementById('euGrade').innerHTML=_euGradeOptions(stage,'');
+}
+function _adminEditUser(username){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  var users=_accGetUsers(); var usr=users[username]; if(!usr) return;
+  _euUsername=username;
+  document.getElementById('euDisplayName').value=usr.displayName||'';
+  var isStudent=(usr.role==='student');
+  document.getElementById('euGradeFields').style.display=isStudent?'block':'none';
+  document.getElementById('editUserInfo').textContent='用户名：'+username+' · 角色：'+(usr.role==='admin'?'总管理员':(usr.role==='student'?'学生':'家长'));
+  if(isStudent){
+    var stage=usr.stage||'小学'; var grade=usr.grade||'';
+    document.getElementById('euStage').value=stage;
+    document.getElementById('euGrade').innerHTML=_euGradeOptions(stage, grade);
+    document.getElementById('euSemester').value=usr.semester||'上';
+  }
+  document.getElementById('editUserModal').classList.add('show');
+}
+function closeEditUserModal(){ document.getElementById('editUserModal').classList.remove('show'); _euUsername=''; }
+function _adminSaveEditUser(){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  if(!_euUsername) return;
+  var users=_accGetUsers(); var usr=users[_euUsername]; if(!usr) return;
+  var name=document.getElementById('euDisplayName').value.trim();
+  if(!name){ alert('显示名称不能为空'); return; }
+  usr.displayName=name;
+  if(usr.role==='student'){
+    usr.stage=document.getElementById('euStage').value;
+    usr.grade=document.getElementById('euGrade').value;
+    usr.semester=document.getElementById('euSemester').value;
+    if(!usr.grade){ alert('请选择年级'); return; }
+  }
+  var edited=_euUsername;
+  _accSaveUsers(users);
+  closeEditUserModal();
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+  // 若编辑的是当前登录的账号本身，同步更新会话与顶栏显示名
+  if(session && session.username===edited){ session.displayName=name; _accSaveSession(session); document.getElementById('userName').textContent=name; }
+  alert('✅ 用户资料已更新');
+}
+function _renderInviteCode(){
+  var code=(localStorage.getItem('sw_invite_code')||'').trim();
+  var input=document.getElementById('admInviteCode'); if(input) input.placeholder=code?('当前邀请码：'+code):'输入新的 4 位数字';
+  var hint=document.getElementById('admInviteHint'); if(hint) hint.textContent=code?('✅ 当前生效的注册邀请码：'+code):'尚未设置邀请码';
+}
+function _adminChangeInviteCode(){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  var v=(document.getElementById('admInviteCode').value||'').trim();
+  if(!/^\d{4}$/.test(v)){ alert('邀请码必须是 4 位数字'); return; }
+  localStorage.setItem('sw_invite_code',v); _renderInviteCode(); alert('✅ 注册邀请码已更新为 '+v);
+}
+function _adminAssignFamily(username,familyName){
+  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  var users=_accGetUsers(); if(!users[username]) return;
+  for(var fk in families){ if(families[fk].members){ var idx=families[fk].members.indexOf(username); if(idx>=0) families[fk].members.splice(idx,1); } }
+  if(familyName&&families[familyName]){
+    if(!families[familyName].members) families[familyName].members=[];
+    if(families[familyName].members.indexOf(username)<0) families[familyName].members.push(username);
+    localStorage.setItem('sw_families',JSON.stringify(families)); alert('✅ '+username+' 已加入家庭「'+familyName+'」');
+  } else { localStorage.setItem('sw_families',JSON.stringify(families)); alert('已取消 '+username+' 的家庭分配'); }
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+  _renderFamilyMgmt(document.getElementById('page-familyMgmt'));
+}
+
+// ===== 管理员：家庭管理 =====
+function _renderFamilyMgmt(el){
+  if(!isAdminSession()){ el.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">⛔ 仅管理员可访问</div>'; return; }
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  var users=_accGetUsers();
+  var pickerHtml='<p style="font-size:12px;color:var(--text3);margin-bottom:8px">勾选要加入家庭的成员：</p>';
+  var unames=Object.keys(users).filter(function(u){ return users[u].role!=='admin'; });
+  for(var i=0;i<unames.length;i++){
+    var u=users[unames[i]]; var icon=u.role==='student'?'🎒':'👨‍👩‍👧';
+    pickerHtml+='<label style="cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--surface2);border-radius:20px;font-size:12px"><input type="checkbox" value="'+unames[i]+'" class="fam-member-cb"> '+icon+' '+(u.displayName||unames[i])+' ('+unames[i]+')</label>';
+  }
+  document.getElementById('famMemberPicker').innerHTML=pickerHtml;
+  var html=''; var fkeys=Object.keys(families);
+  if(fkeys.length===0){ html='<div style="text-align:center;padding:30px;color:var(--text3)">暂无家庭，请在上方创建第一个家庭 🏠</div>'; }
+  else{
+    for(var fi=0;fi<fkeys.length;fi++){
+      var fid=fkeys[fi]; var fam=families[fid];
+      html+='<div class="family-card"><div class="family-header"><span class="family-name">🏠 '+fid+'</span><button class="btn btn-danger btn-sm" onclick="_deleteFamily(\''+fid+'\')">删除家庭</button></div><div class="family-members">';
+      if(fam.members&&fam.members.length>0){ for(var mi=0;mi<fam.members.length;mi++){ var mun=fam.members[mi]; var mu=users[mun]||{}; var micon=mu.role==='student'?'🎒':(mu.role==='parent'?'👨‍👩‍👧':'❓'); var mcls=mu.role==='student'?'student':'parent'; html+='<span class="member-tag '+mcls+'">'+micon+' '+(mu.displayName||mun)+'</span>'; } }
+      html+='</div></div>';
+    }
+  }
+  document.getElementById('familyListContainer').innerHTML=html;
+}
+function _createFamily(){
+  var name=document.getElementById('famName').value.trim(); if(!name){ alert('请输入家庭名称'); return; }
+  var cbs=document.querySelectorAll('.fam-member-cb:checked'); var members=[];
+  for(var i=0;i<cbs.length;i++) members.push(cbs[i].value);
+  if(members.length===0){ alert('请至少选择一个成员'); return; }
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  families[name]={name:name,members:members,createdAt:Date.now(),createdBy:session.username};
+  localStorage.setItem('sw_families',JSON.stringify(families));
+  document.getElementById('famName').value=''; cbs.forEach(function(cb){ cb.checked=false; });
+  _renderFamilyMgmt(document.getElementById('page-familyMgmt'));
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+  alert('✅ 家庭「'+name+'」已创建，包含 '+members.length+' 位成员');
+}
+function _deleteFamily(fid){
+  if(!confirm('确定删除家庭「'+fid+'」？成员不会被删除，只是解除关联。')) return;
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}'); delete families[fid];
+  localStorage.setItem('sw_families',JSON.stringify(families));
+  _renderFamilyMgmt(document.getElementById('page-familyMgmt'));
+  _renderAdminUsers(document.getElementById('page-adminUsers'));
+  alert('已删除家庭 '+fid);
+}
+
+// ===== 家长：管理本家庭学生 =====
+function loadParentPage(){
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  var myFamily=null;
+  for(var fk in families){ if(families[fk].members&&families[fk].members.indexOf(session.username)>=0){ myFamily=fk; break; } }
+  if(!myFamily){ document.getElementById('parentNotReady').style.display='block'; document.getElementById('parentReady').style.display='none'; return; }
+  document.getElementById('parentNotReady').style.display='none'; document.getElementById('parentReady').style.display='block';
+  document.getElementById('parentFamilyInfo').innerHTML='🏠 <b>'+myFamily+'</b> · 共 '+families[myFamily].members.length+' 位成员';
+  renderParentStudentList();
+}
+function renderParentStudentList(){
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  var myFamily=null;
+  for(var fk in families){ if(families[fk].members&&families[fk].members.indexOf(session.username)>=0){ myFamily=fk; break; } }
+  if(!myFamily){ document.getElementById('parentStudentList').innerHTML=''; return; }
+  var users=_accGetUsers();
+  var html=''; var members=families[myFamily].members;
+  var hasStudent=false;
+  for(var i=0;i<members.length;i++){
+    var mun=members[i]; var mu=users[mun]||{}; if(mu.role!=='student') continue; hasStudent=true;
+    var data=mu.data||{}; var pts=(data.user&&data.user.points)||0;
+    html+='<div class="student-card" onclick="parentSelectStudent(\''+mun+'\')"><div style="font-weight:700">'+(mu.displayName||mun)+'</div><div style="font-size:12px;color:var(--text2)">'+mun+' · '+(mu.grade||(mu.stage||'')+(mu.grade||''))+' · ⭐ '+pts+' 分</div></div>';
+  }
+  document.getElementById('parentStudentList').innerHTML=html||'<div class="empty-state">还没有学生加入此家庭<br>让学生注册后，管理员在「用户管理」中将其分配到本家庭</div>';
+  document.getElementById('parentStudentDetail').style.display='none';
+}
+var _curStu=null;
+var _curPage='parent';
+var _scEditId=null;
+function parentSelectStudent(uname){ _curStu=uname; renderParentStudentDetail(); }
+function parentRefreshStudent(){ if(_curStu) renderParentStudentDetail(); }
+function renderParentStudentDetail(){
+  if(!_curStu) return;
+  var users=_accGetUsers(); var mu=users[_curStu]||{}; var data=mu.data||{};
+  document.getElementById('parentStuName').textContent=(mu.displayName||_curStu)+' 的学习情况';
+  var html='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">'+_curStu+' · '+(mu.grade||(mu.stage||'')+(mu.grade||''))+' · ⭐ '+((data.user&&data.user.points)||0)+' 分</div>';
+  var hw=(data.homework&&data.homework.length)||0;
+  var parentHw=(mu.parentHomework&&mu.parentHomework.length)||0;
+  html+='<div class="stat-card accent-primary" style="display:inline-block;margin-right:10px"><div class="value" style="font-size:20px">'+(data.wrongBook?data.wrongBook.length:0)+'</div><div class="label">错题</div></div>';
+  html+='<div class="stat-card accent-orange" style="display:inline-block"><div class="value" style="font-size:20px">'+(hw+parentHw)+'</div><div class="label">作业</div></div>';
+  if(mu.parentHomework&&mu.parentHomework.length){
+    html+='<h4 style="margin:14px 0 8px">📝 我布置的作业</h4>';
+    for(var i=0;i<mu.parentHomework.length;i++){ var h=mu.parentHomework[i]; html+='<div style="font-size:13px;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:6px">'+h.subject+'：'+h.content+' · ⭐'+h.points+'分 · '+(h.done?'✅已完成':'⏳待完成')+'</div>'; }
+  }
+  document.getElementById('parentStuBody').innerHTML=html;
+  document.getElementById('parentStudentDetail').style.display='block';
+}
+function openParentHwModal(){ if(!_curStu){ alert('请先选择一名学生'); return; } document.getElementById('parentHwModal').classList.add('show'); }
+function closeParentHwModal(){ document.getElementById('parentHwModal').classList.remove('show'); }
+function parentSaveHomework(){
+  if(!_curStu) return;
+  var subject=document.getElementById('hwSubject').value.trim();
+  var content=document.getElementById('hwContent').value.trim();
+  var points=parseInt(document.getElementById('hwPoints').value||'10',10);
+  if(!subject||!content){ alert('请填写科目和内容'); return; }
+  var users=_accGetUsers();
+  if(!users[_curStu].parentHomework) users[_curStu].parentHomework=[];
+  users[_curStu].parentHomework.push({id:'phw_'+Date.now()+Math.floor(Math.random()*1000),subject:subject,content:content,points:points,done:false,createdAt:Date.now()});
+  _accSaveUsers(users);
+  document.getElementById('hwSubject').value=''; document.getElementById('hwContent').value=''; document.getElementById('hwPoints').value='10';
+  closeParentHwModal(); renderParentStudentDetail(); alert('✅ 已为 '+(users[_curStu].displayName||_curStu)+' 布置作业');
+}
+function parentApproveRedemption(id){ /* 本地模式预留 */ }
+function parentRejectRedemption(id){ /* 本地模式预留 */ }
+
+// ===== 修改密码（当前账号）=====
+function changeAccountPassword(){
+  var oldP=document.getElementById('accOldPwd').value;
+  var newP=document.getElementById('accNewPwd').value;
+  var newP2=document.getElementById('accNewPwd2').value;
+  if(!oldP||!newP||!newP2){ alert('请填写所有密码字段'); return; }
+  var db=_accGetUsers(); var u=db[session.username];
+  if(!u){ alert('账户数据异常'); return; }
+  if(u.password!==simpleHash(oldP)){ alert('当前密码错误'); return; }
+  if(newP.length<4){ alert('新密码至少4位'); return; }
+  if(newP!==newP2){ alert('两次新密码不一致'); return; }
+  u.password=simpleHash(newP); _accSaveUsers(db);
+  document.getElementById('accOldPwd').value=''; document.getElementById('accNewPwd').value=''; document.getElementById('accNewPwd2').value='';
+  alert('密码修改成功 ✓');
+}
+
+// ===== 家长：学习成绩 / 学习进度 / 教材设置（与 student-enhance.js 共享 sw_users 数据）=====
+var PARENT_SUBJECTS=['语文','数学','英语','物理','化学','生物','历史','地理','政治'];
+var PUBLISHER_LIST=['人民教育出版社（人教版）','北京师范大学出版社（北师大版）','江苏教育出版社（苏教版）','华东师范大学出版社（华东师大版）','浙江教育出版社（浙教版）','外语教学与研究出版社（外研社）','语文出版社（语文版）','其他'];
+
+function _ppEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','&quot;':'&quot;'}[c];}); }
+function _ppToday(){ var d=new Date(); var m=('0'+(d.getMonth()+1)).slice(-2); var day=('0'+d.getDate()).slice(-2); return d.getFullYear()+'-'+m+'-'+day; }
+function _parentGetStudents(){
+  var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
+  var myFamily=null;
+  for(var fk in families){ if(families[fk].members&&families[fk].members.indexOf(session.username)>=0){ myFamily=fk; break; } }
+  if(!myFamily) return [];
+  var users=_accGetUsers(); var arr=[];
+  families[myFamily].members.forEach(function(m){ if(users[m]&&users[m].role==='student') arr.push(m); });
+  return arr;
+}
+function _parentStudentPicker(){
+  var stus=_parentGetStudents();
+  if(stus.length===0) return '<div class="empty-state">没有关联的学生，请先在「家庭管理」中加入学生</div>';
+  var html='<div class="form-row" style="margin-bottom:16px"><label style="font-size:13px;color:var(--text2);align-self:center">选择学生：</label><select id="pStuSel" class="form-control" style="max-width:240px" onchange="_parentPickStudent(this.value)">';
+  for(var i=0;i<stus.length;i++){ var u=_accGetUsers()[stus[i]]; html+='<option value="'+stus[i]+'"'+(_curStu===stus[i]?' selected':'')+'>'+(u.displayName||stus[i])+'（'+stus[i]+'）</option>'; }
+  html+='</select></div>';
+  return html;
+}
+function _parentPickStudent(uname){ _curStu=uname; if(_curPage==='parentScores') renderParentScoresPage(); else if(_curPage==='parentProgress') renderParentProgressPage(); else if(_curPage==='parentPublisher') renderParentPublisherPage(); }
+
+/* ---- 学习成绩 ---- */
+function renderParentScoresPage(){
+  var el=document.getElementById('page-parentScores'); if(!el) return;
+  var stus=_parentGetStudents();
+  if(stus.length===0){ el.innerHTML='<div class="panel"><div class="empty-state">家庭中还没有关联的学生。<br>请在「家庭管理」中把学生加入本家庭后，再来录入成绩。</div></div>'; return; }
+  if(!_curStu||stus.indexOf(_curStu)<0) _curStu=stus[0];
+  var users=_accGetUsers(); var u=users[_curStu]||{}; if(!u.data) u.data={}; var scores=u.data.scores||[];
+  var editing=null;
+  if(_scEditId){ for(var e=0;e<scores.length;e++){ if(scores[e].id===_scEditId){ editing=scores[e]; break; } } }
+  var h='<div class="page-header"><h2>📈 学习成绩</h2><p>录入与查看 '+_ppEsc(_curStu)+' 的考试成绩，学生端自动同步</p></div>';
+  h+=_parentStudentPicker();
+  h+='<div class="panel"><h3>'+(editing?'✏️ 修改成绩':'➕ 录入成绩')+'</h3>';
+  h+='<div class="form-row"><select id="scSubj" class="form-control" style="max-width:120px">';
+  for(var s=0;s<PARENT_SUBJECTS.length;s++){ h+='<option'+(editing&&editing.subject===PARENT_SUBJECTS[s]?' selected':'')+'>'+PARENT_SUBJECTS[s]+'</option>'; }
+  h+='</select>';
+  h+='<input id="scExam" class="form-control" placeholder="考试名称，如：期中测验" value="'+(editing?_ppEsc(editing.examName):'')+'">';
+  h+='<input id="scScore" class="form-control" style="max-width:110px" placeholder="得分" value="'+(editing?_ppEsc(editing.score):'')+'">';
+  h+='<input id="scTotal" class="form-control" style="max-width:110px" placeholder="满分" value="'+(editing?_ppEsc(editing.totalScore):'')+'">';
+  h+='<input id="scDate" class="form-control" style="max-width:160px" type="date" value="'+(editing?_ppEsc(editing.date):_ppToday())+'"></div>';
+  h+='<div style="margin-top:10px"><button class="btn btn-primary" onclick="_scAddOrUpdate()">'+(editing?'💾 保存修改':'➕ 录入')+'</button>';
+  if(editing) h+=' <button class="btn btn-outline" onclick="_scCancelEdit()">取消</button>';
+  h+='</div></div>';
+  h+='<div class="panel"><h3>📋 成绩列表（'+scores.length+' 条）</h3>';
+  if(scores.length===0) h+='<div class="empty-state">暂无成绩记录</div>';
+  else {
+    scores.sort(function(a,b){ return (b.date||'').localeCompare(a.date||''); });
+    h+='<div style="overflow-x:auto"><table class="user-list-table"><thead><tr><th>科目</th><th>考试</th><th>得分</th><th>满分</th><th>日期</th><th>操作</th></tr></thead><tbody>';
+    for(var j=0;j<scores.length;j++){ var sc=scores[j]; h+='<tr><td>'+_ppEsc(sc.subject)+'</td><td>'+_ppEsc(sc.examName)+'</td><td><b>'+_ppEsc(sc.score)+'</b></td><td>'+_ppEsc(sc.totalScore)+'</td><td>'+_ppEsc(sc.date)+'</td><td class="action-btns"><button class="btn-link" onclick="_scEdit(\''+sc.id+'\')">编辑</button><button class="btn-delete" onclick="_scDelete(\''+sc.id+'\')">删除</button></td></tr>'; }
+    h+='</tbody></table></div>';
+  }
+  h+='</div>';
+  el.innerHTML=h;
+}
+function _scAddOrUpdate(){
+  if(!_curStu){ alert('请先选择一名学生'); return; }
+  var subject=document.getElementById('scSubj').value;
+  var exam=document.getElementById('scExam').value.trim();
+  var score=document.getElementById('scScore').value;
+  var total=document.getElementById('scTotal').value;
+  var date=document.getElementById('scDate').value;
+  if(!exam||score===''||total===''){ alert('请填写考试名称、得分和满分'); return; }
+  var users=_accGetUsers(); var u=users[_curStu]; if(!u.data) u.data={}; if(!u.data.scores) u.data.scores=[];
+  if(_scEditId){
+    for(var i=0;i<u.data.scores.length;i++){ if(u.data.scores[i].id===_scEditId){ u.data.scores[i].subject=subject;u.data.scores[i].examName=exam;u.data.scores[i].score=score;u.data.scores[i].totalScore=total;u.data.scores[i].date=date; break; } }
+    _scEditId=null;
+  } else {
+    u.data.scores.push({id:'sc_'+Date.now()+Math.floor(Math.random()*1000),subject:subject,examName:exam,score:score,totalScore:total,date:date});
+  }
+  _accSaveUsers(users);
+  renderParentScoresPage();
+}
+function _scEdit(id){ _scEditId=id; renderParentScoresPage(); }
+function _scCancelEdit(){ _scEditId=null; renderParentScoresPage(); }
+function _scDelete(id){ if(!confirm('确定删除这条成绩记录？')) return; var users=_accGetUsers(); var u=users[_curStu]; if(!u||!u.data||!u.data.scores) return; u.data.scores=u.data.scores.filter(function(x){return x.id!==id;}); _accSaveUsers(users); renderParentScoresPage(); }
+
+/* ---- 学习进度（教材版本 + 学期 + 单元 + 课 四级联动，与真实教材同步）---- */
+function renderParentProgressPage(){
+  var el=document.getElementById('page-parentProgress'); if(!el) return;
+  var stus=_parentGetStudents();
+  if(stus.length===0){ el.innerHTML='<div class="panel"><div class="empty-state">家庭中还没有关联的学生。<br>请在「家庭管理」中把学生加入本家庭。</div></div>'; return; }
+  if(!_curStu||stus.indexOf(_curStu)<0) _curStu=stus[0];
+  var users=_accGetUsers(); var u=users[_curStu]||{}; if(!u.data) u.data={}; var prog=u.data.progress||{};
+  var h='<div class="page-header"><h2>📚 学习进度</h2><p>为 '+_ppEsc(_curStu)+' 选择各学科当前学到的教材位置，与学校保持一致</p></div>';
+  h+=_parentStudentPicker();
+  h+='<div class="panel"><h3>📖 各学科学习位置（教材版本 · 学期 · 单元 · 课）</h3>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">选择后会同步给学生端，学生端学习内容按此位置展示。仅显示本年级开设的学科。</div>';
+  var grade=u.grade||'一年级';
+  var subjList = window.TB ? _ppAvailableSubjects(grade) : PARENT_SUBJECTS;
+  if(subjList.length===0){
+    h+='<div class="empty-state">当前年级（'+_ppEsc(grade)+'）暂未收录教材数据，请联系管理员补充。</div>';
+  }
+  for(var i=0;i<subjList.length;i++){
+    var sj=subjList[i]; var pr=prog[sj]||{};
+    var ver=pr.version||'人教版（部编版）';
+    var sem=pr.semester||(u.semester||'上');
+    var unitIdx=(typeof pr.unitIdx==='number')?pr.unitIdx:0;
+    var lessonIdx=(typeof pr.lessonIdx==='number')?pr.lessonIdx:0;
+    var units=window.TB?window.TB.units(ver,sj,grade,sem):[];
+    var lessons=(units[unitIdx]&&units[unitIdx].l)?units[unitIdx].l:[];
+    var versions=window.TB?window.TB.versions():[ver];
+    var sems=['上','下'];
+    h+='<div style="border-bottom:1px solid var(--border);padding:14px 0">';
+    h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>'+sj+'</b><span style="font-size:12px;color:var(--text2)">当前：'+(pr.note||'未设置')+'</span></div>';
+    h+='<div class="form-row" style="margin-bottom:8px">';
+    h+='<select id="ppVer_'+i+'" class="form-control" style="flex:1;min-width:140px" onchange="_ppLoadUnits('+i+')"><option value="">— 教材版本 —</option>';
+    for(var v=0;v<versions.length;v++){ h+='<option value="'+_ppEsc(versions[v])+'"'+(ver===versions[v]?' selected':'')+'>'+_ppEsc(versions[v])+'</option>'; }
+    h+='</select>';
+    h+='<select id="ppSem_'+i+'" class="form-control" style="width:90px" onchange="_ppLoadUnits('+i+')"><option value="上"'+(sem==='上'?' selected':'')+'>上学期</option><option value="下"'+(sem==='下'?' selected':'')+'>下学期</option></select>';
+    h+='</div>';
+    h+='<div class="form-row" style="margin-bottom:8px">';
+    h+='<select id="ppUnit_'+i+'" class="form-control" style="flex:1" onchange="_ppLoadLessons('+i+')"><option value="-1">— 选择单元 —</option>';
+    for(var ui=0;ui<units.length;ui++){ h+='<option value="'+ui+'"'+(unitIdx===ui?' selected':'')+'>'+_ppEsc(units[ui].u)+'</option>'; }
+    h+='</select>';
+    h+='<select id="ppLesson_'+i+'" class="form-control" style="flex:1"><option value="-1">— 选择课 —</option>';
+    for(var li=0;li<lessons.length;li++){ h+='<option value="'+li+'"'+(lessonIdx===li?' selected':'')+'>'+_ppEsc(lessons[li])+'</option>'; }
+    h+='</select>';
+    h+='</div>';
+    h+='<button class="btn btn-sm btn-primary" onclick="_ppSave('+i+')">保存'+sj+'位置</button>';
+    h+='</div>';
+  }
+  h+='</div>';
+  el.innerHTML=h;
+}
+function _ppAvailableSubjects(grade){
+  // 按年级过滤：仅返回该年级在任一教材版本中有数据的学科
+  var all=['语文','数学','英语','物理','化学'];
+  var out=[];
+  for(var s=0;s<all.length;s++){
+    var sj=all[s];
+    var found=false;
+    var vers=window.TB.versions();
+    for(var v=0;v<vers.length;v++){
+      if(window.TB.grades(vers[v],sj).indexOf(grade)>=0){ found=true; break; }
+    }
+    if(found) out.push(sj);
+  }
+  return out;
+}
+function _ppLoadUnits(i){
+  var ver=document.getElementById('ppVer_'+i).value;
+  var sem=document.getElementById('ppSem_'+i).value;
+  var u=_accGetUsers()[_curStu]||{}; var grade=u.grade||'一年级';
+  var sj=_ppSubjByIndex(i);
+  var units=window.TB?window.TB.units(ver,sj,grade,sem):[];
+  var uh='<option value="-1">— 选择单元 —</option>';
+  for(var ui=0;ui<units.length;ui++){ uh+='<option value="'+ui+'">'+_ppEsc(units[ui].u)+'</option>'; }
+  document.getElementById('ppUnit_'+i).innerHTML=uh;
+  _ppLoadLessons(i);
+}
+function _ppLoadLessons(i){
+  var ver=document.getElementById('ppVer_'+i).value;
+  var sem=document.getElementById('ppSem_'+i).value;
+  var unitIdx=parseInt(document.getElementById('ppUnit_'+i).value,10);
+  var u=_accGetUsers()[_curStu]||{}; var grade=u.grade||'一年级';
+  var sj=_ppSubjByIndex(i);
+  var lessons=window.TB?window.TB.lessons(ver,sj,grade,sem,unitIdx):[];
+  var lh='<option value="-1">— 选择课 —</option>';
+  for(var li=0;li<lessons.length;li++){ lh+='<option value="'+li+'">'+_ppEsc(lessons[li])+'</option>'; }
+  document.getElementById('ppLesson_'+i).innerHTML=lh;
+}
+function _ppSubjByIndex(i){
+  var u=_accGetUsers()[_curStu]||{}; var grade=u.grade||'一年级';
+  var list=_ppAvailableSubjects(grade);
+  return list[i]||'语文';
+}
+function _ppSave(i){
+  if(!_curStu) return;
+  var sj=_ppSubjByIndex(i);
+  var ver=document.getElementById('ppVer_'+i).value;
+  var sem=document.getElementById('ppSem_'+i).value;
+  var unitIdx=parseInt(document.getElementById('ppUnit_'+i).value,10);
+  var lessonIdx=parseInt(document.getElementById('ppLesson_'+i).value,10);
+  if(!ver){ alert('请选择教材版本'); return; }
+  if(unitIdx<0||lessonIdx<0){ alert('请选择单元和课'); return; }
+  var units=window.TB?window.TB.units(ver,sj,_accGetUsers()[_curStu].grade||'一年级',sem):[];
+  var unitName=units[unitIdx]?units[unitIdx].u:'';
+  var lessonName=(units[unitIdx]&&units[unitIdx].l)?units[unitIdx].l[lessonIdx]:'';
+  var users=_accGetUsers(); var u=users[_curStu]; if(!u.data) u.data={}; if(!u.data.progress) u.data.progress={};
+  u.data.progress[sj]={version:ver,semester:sem,unitIdx:unitIdx,lessonIdx:lessonIdx,note:(unitName+' · '+lessonName)};
+  _accSaveUsers(users);
+  // 主动推送云端，确保学生端能立即拉取到
+  if(window.SyncHub){ try{ SyncHub.push(); }catch(e){} }
+  renderParentProgressPage();
+  alert('✅ 已保存 '+sj+'：'+unitName+' · '+lessonName+'（学生端打开「教材与进度」页点「从云端同步」可立即看到）');
+}
+
+/* ---- 教材设置 ---- */
+function renderParentPublisherPage(){
+  var el=document.getElementById('page-parentPublisher'); if(!el) return;
+  var stus=_parentGetStudents();
+  if(stus.length===0){ el.innerHTML='<div class="panel"><div class="empty-state">家庭中还没有关联的学生。<br>请在「家庭管理」中把学生加入本家庭。</div></div>'; return; }
+  if(!_curStu||stus.indexOf(_curStu)<0) _curStu=stus[0];
+  var users=_accGetUsers(); var u=users[_curStu]||{}; if(!u.data) u.data={}; var pub=u.data.publisher||{};
+  var h='<div class="page-header"><h2>📕 教材设置</h2><p>为 '+_ppEsc(_curStu)+' 选择各学科的教材出版社，与学校一致</p></div>';
+  h+=_parentStudentPicker();
+  h+='<div class="panel"><h3>📚 教材出版社（按学科）</h3>';
+  for(var i=0;i<PARENT_SUBJECTS.length;i++){
+    var sj=PARENT_SUBJECTS[i]; var cur=pub[sj]||'';
+    h+='<div style="display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><span style="width:60px;font-weight:600">'+sj+'</span><select id="pubSel_'+i+'" class="form-control" style="flex:1"><option value="">— 未设置 —</option>';
+    for(var p=0;p<PUBLISHER_LIST.length;p++){ h+='<option'+(cur===PUBLISHER_LIST[p]?' selected':'')+'>'+PUBLISHER_LIST[p]+'</option>'; }
+    h+='</select><button class="btn btn-sm btn-primary" onclick="_pubSave(\''+sj+'\','+i+')">保存</button></div>';
+  }
+  h+='</div>';
+  el.innerHTML=h;
+}
+function _pubSave(subject,i){
+  if(!_curStu) return;
+  var v=document.getElementById('pubSel_'+i).value;
+  var users=_accGetUsers(); var u=users[_curStu]; if(!u.data) u.data={}; if(!u.data.publisher) u.data.publisher={};
+  if(v) u.data.publisher[subject]=v; else delete u.data.publisher[subject];
+  _accSaveUsers(users);
+  renderParentPublisherPage();
+  alert('✅ 已保存 '+subject+' 教材版本');
+}
+
+/* ==========================================================
+   积分奖励管理（家长端）：积分规则 / 奖励兑换制度 / 心愿单评语
+   数据存 sw_users[学生].data.rewards / .data.wishlist，与学生端实时同步
+   ========================================================== */
+var DEFAULT_REWARD_RULES=[
+  {action:'完成每日作业',points:5},
+  {action:'生字认读完成',points:2},
+  {action:'古诗背诵完成',points:3},
+  {action:'数学练习完成',points:3},
+  {action:'英语单词学习',points:2},
+  {action:'阅读打卡（每10分钟）',points:1}
+];
+var DEFAULT_ENCOURAGEMENTS=['太棒了，继续加油！🌟','今天也很努力呢！💪','坚持就是胜利！🔥','你越来越棒啦！🎉','为你的认真点赞！👍','小进步也是进步，真棒！🌱'];
+
+function _rewGetUserDB(){ try{ return JSON.parse(localStorage.getItem('sw_users'))||{}; }catch(e){ return {}; } }
+function _rewSaveUserDB(db){ localStorage.setItem('sw_users', JSON.stringify(db)); }
+function _rewGetStudentData(uname){
+  var db=_rewGetUserDB(); var u=db[uname]||{}; if(!u.data) u.data={};
+  if(!u.data.rewards){ u.data.rewards={rules:DEFAULT_REWARD_RULES.slice(),rewards:[],encouragements:DEFAULT_ENCOURAGEMENTS.slice()}; }
+  if(!u.data.wishlist) u.data.wishlist=[];
+  return {db:db,u:u,rewards:u.data.rewards,wishlist:u.data.wishlist};
+}
+function _rewSave(rd){ rd.u.data.rewards=rd.rewards; rd.u.data.wishlist=rd.wishlist; _rewSaveUserDB(rd.db); }
+
+function renderParentRewardsPage(){
+  var el=document.getElementById('page-parentRewards'); if(!el) return;
+  var stus=_parentGetStudents();
+  if(stus.length===0){ el.innerHTML='<div class="panel"><div class="empty-state">家庭中还没有关联的学生。<br>请在「家庭管理」中把学生加入本家庭。</div></div>'; return; }
+  if(!_curStu||stus.indexOf(_curStu)<0) _curStu=stus[0];
+  var rd=_rewGetStudentData(_curStu);
+  var rules=rd.rewards.rules||[], rewards=rd.rewards.rewards||[], encs=rd.rewards.encouragements||[], wishes=rd.wishlist||[];
+  var h='<div class="page-header"><h2>🏆 积分奖励管理</h2><p>为 '+_ppEsc(_curStu)+' 设置积分规则、奖励兑换制度，并查看/点评孩子的心愿单</p></div>';
+  h+=_parentStudentPicker();
+  // 1. 积分规则
+  h+='<div class="panel"><h3>📋 积分规则（行为 → 积分）</h3>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">学生端完成对应行为自动加分，规则可自定义。</div>';
+  for(var r=0;r<rules.length;r++){
+    h+='<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">';
+    h+='<input id="rwRule_' + r + '" value="' + _ppEsc(rules[r].action) + '" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">';
+    h+='<span style="font-size:12px;color:var(--text2)">+</span>';
+    h+='<input id="rwRulePts_' + r + '" type="number" value="' + (rules[r].points||0) + '" style="width:70px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">';
+    h+='<span style="font-size:12px;color:var(--text2)">分</span>';
+    h+='<button class="btn-delete" onclick="_rewDeleteRule(' + r + ')">✕</button>';
+    h+='</div>';
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm btn-outline" onclick="_rewAddRule()">➕ 添加规则</button><button class="btn btn-sm btn-primary" onclick="_rewSaveRules()">💾 保存规则</button></div>';
+  h+='</div>';
+  // 2. 奖励兑换制度
+  h+='<div class="panel"><h3>🎁 奖励兑换制度（满积分兑换）</h3>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-bottom:10px">学生积分达到门槛后，可自主兑换以下奖励（消耗积分）。</div>';
+  for(var w=0;w<rewards.length;w++){
+    h+='<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">';
+    h+='<input id="rwRewIcon_' + w + '" value="' + _ppEsc(rewards[w].icon||'🎁') + '" style="width:60px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;text-align:center">';
+    h+='<input id="rwRewName_' + w + '" value="' + _ppEsc(rewards[w].name) + '" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px" placeholder="奖励名称（如：看动画片30分钟）">';
+    h+='<input id="rwRewPts_' + w + '" type="number" value="' + (rewards[w].points||0) + '" style="width:80px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px" placeholder="所需积分">';
+    h+='<button class="btn-delete" onclick="_rewDeleteReward(' + w + ')">✕</button>';
+    h+='</div>';
+  }
+  h+='<div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-sm btn-outline" onclick="_rewAddReward()">➕ 添加奖励</button><button class="btn btn-sm btn-primary" onclick="_rewSaveRewards()">💾 保存奖励</button></div>';
+  h+='</div>';
+  // 3. 鼓励语
+  h+='<div class="panel"><h3>💬 鼓励语（随机显示给学生）</h3>';
+  h+='<textarea id="rwEncs" style="width:100%;min-height:80px;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit" placeholder="每行一条鼓励语">'+_ppEsc(encs.join('\n'))+'</textarea>';
+  h+='<button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="_rewSaveEncs()">💾 保存鼓励语</button>';
+  h+='</div>';
+  // 4. 心愿单 + 评语
+  h+='<div class="panel"><h3>🎯 孩子的心愿单 <span class="section-right" style="font-size:12px;color:var(--text3)">'+wishes.length+' 条</span></h3>';
+  if(wishes.length===0){
+    h+='<div class="empty-state">孩子还没有添加心愿，快去学生端「积分奖励」页添加吧！</div>';
+  }else{
+    for(var wi=0;wi<wishes.length;wi++){
+      var wsh=wishes[wi];
+      h+='<div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px">';
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><b>'+(wsh.icon||'🎁')+' '+_ppEsc(wsh.name||'心愿')+'</b><span style="font-size:13px;color:var(--org);font-weight:600">'+wsh.points+' 积分</span></div>';
+      if(wsh.comment){ h+='<div style="font-size:12px;color:var(--pri);background:var(--surface2);border-radius:8px;padding:8px 10px;margin-bottom:8px">💬 家长评语：'+_ppEsc(wsh.comment)+'<div style="font-size:11px;color:var(--text3);margin-top:2px">'+(wsh.commentAt||'')+'</div></div>'; }
+      h+='<div style="display:flex;gap:8px;align-items:center">';
+      h+='<input id="rwWishCmt_' + wi + '" placeholder="写评语…" value="' + _ppEsc(wsh.comment||'') + '" style="flex:1;padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px">';
+      h+='<button class="btn btn-sm btn-primary" onclick="_rewSaveWishComment(' + wi + ')">发送评语</button>';
+      h+='</div>';
+      h+='</div>';
+    }
+  }
+  h+='</div>';
+  el.innerHTML=h;
+}
+function _rewAddRule(){ var rd=_rewGetStudentData(_curStu); rd.rewards.rules.push({action:'新行为',points:1}); _rewSave(rd); renderParentRewardsPage(); }
+function _rewDeleteRule(i){ if(!confirm('删除这条积分规则？')) return; var rd=_rewGetStudentData(_curStu); rd.rewards.rules.splice(i,1); _rewSave(rd); renderParentRewardsPage(); }
+function _rewSaveRules(){
+  var rd=_rewGetStudentData(_curStu);
+  var rules=[];
+  for(var i=0;i<rd.rewards.rules.length;i++){
+    var a=(document.getElementById('rwRule_'+i).value||'').trim();
+    var p=parseInt(document.getElementById('rwRulePts_'+i).value,10)||0;
+    if(a) rules.push({action:a,points:p});
+  }
+  rd.rewards.rules=rules; _rewSave(rd); renderParentRewardsPage(); alert('✅ 积分规则已保存');
+}
+function _rewAddReward(){ var rd=_rewGetStudentData(_curStu); rd.rewards.rewards.push({name:'新奖励',points:10,icon:'🎁'}); _rewSave(rd); renderParentRewardsPage(); }
+function _rewDeleteReward(i){ if(!confirm('删除这条奖励？')) return; var rd=_rewGetStudentData(_curStu); rd.rewards.rewards.splice(i,1); _rewSave(rd); renderParentRewardsPage(); }
+function _rewSaveRewards(){
+  var rd=_rewGetStudentData(_curStu);
+  var rewards=[];
+  for(var i=0;i<rd.rewards.rewards.length;i++){
+    var n=(document.getElementById('rwRewName_'+i).value||'').trim();
+    var p=parseInt(document.getElementById('rwRewPts_'+i).value,10)||0;
+    var ic=(document.getElementById('rwRewIcon_'+i).value||'🎁').trim();
+    if(n&&p>0) rewards.push({name:n,points:p,icon:ic});
+  }
+  rd.rewards.rewards=rewards; _rewSave(rd); renderParentRewardsPage(); alert('✅ 奖励制度已保存');
+}
+function _rewSaveEncs(){
+  var rd=_rewGetStudentData(_curStu);
+  var txt=(document.getElementById('rwEncs').value||'');
+  rd.rewards.encouragements=txt.split('\n').map(function(s){return s.trim();}).filter(Boolean);
+  if(rd.rewards.encouragements.length===0) rd.rewards.encouragements=DEFAULT_ENCOURAGEMENTS.slice();
+  _rewSave(rd); renderParentRewardsPage(); alert('✅ 鼓励语已保存');
+}
+function _rewSaveWishComment(wi){
+  var rd=_rewGetStudentData(_curStu);
+  var cmt=(document.getElementById('rwWishCmt_'+wi).value||'').trim();
+  if(rd.wishlist[wi]){ rd.wishlist[wi].comment=cmt; rd.wishlist[wi].commentAt=todayStr(); }
+  _rewSave(rd); renderParentRewardsPage(); alert(cmt?'✅ 评语已发送给孩子':'评语已清空');
+}
+function todayStr(){ var d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+
+/* ==========================================================
+   EmailJS 邮件配置（忘记密码验证码自动发送）
+   ========================================================== */
+function _ejLoad(){
+  try{ return JSON.parse(localStorage.getItem('sw_emailjs'))||{}; }catch(e){ return {}; }
+}
+function _ejSave(cfg){ localStorage.setItem('sw_emailjs', JSON.stringify(cfg)); }
+function _ejFill(){
+  var cfg=_ejLoad();
+  var s=document.getElementById('ejServiceId'),t=document.getElementById('ejTemplateId'),p=document.getElementById('ejPublicKey');
+  if(s) s.value=cfg.serviceId||'';
+  if(t) t.value=cfg.templateId||'';
+  if(p) p.value=cfg.publicKey||'';
+}
+function saveEmailConfig(){
+  var s=document.getElementById('ejServiceId').value.trim();
+  var t=document.getElementById('ejTemplateId').value.trim();
+  var p=document.getElementById('ejPublicKey').value.trim();
+  if(!s||!t||!p){ alert('请填写完整的三个 key'); return; }
+  _ejSave({serviceId:s,templateId:t,publicKey:p});
+  var st=document.getElementById('ejStatus'); if(st){ st.textContent='✅ 已保存，验证码将自动发送到管理员邮箱'; }
+  alert('✅ 邮件配置已保存');
+}
+function testEmailConfig(){
+  var cfg=_ejLoad();
+  if(!cfg.serviceId||!cfg.templateId||!cfg.publicKey){ alert('请先保存配置'); return; }
+  var st=document.getElementById('ejStatus');
+  if(st) st.textContent='⏳ 正在发送测试邮件…';
+  try{
+    if(!window.emailjs){ if(st) st.textContent='❌ EmailJS SDK 未加载（请检查网络）'; return; }
+    emailjs.init({publicKey:cfg.publicKey});
+    emailjs.send(cfg.serviceId, cfg.templateId, {
+      to_email:session.username,
+      reset_code:'TEST123',
+      subject:'【智慧学习平台】邮件服务测试'
+    }).then(function(){
+      if(st) st.textContent='✅ 测试邮件已发送至 '+session.username+'，请查收';
+      alert('✅ 测试邮件已发送！请查看 '+(session.username||'管理员邮箱'));
+    }).catch(function(err){
+      console.error(err);
+      if(st) st.textContent='❌ 发送失败：'+((err&&err.text)||'请检查模板参数');
+      alert('❌ 发送失败：'+((err&&err.text)||'请检查模板参数，模板中需包含 {{to_email}}、{{reset_code}}、{{subject}} 变量'));
+    });
+  }catch(e){
+    if(st) st.textContent='❌ 发送异常：'+e.message;
+  }
+}
+
+
+// ===== 初始化 =====
+document.addEventListener('DOMContentLoaded', function(){
+  if(!session) return;
+  document.getElementById('userName').textContent=session.displayName||(session.role==='admin'?'总管理员':'家长');
+  var isAdmin=session.role==='admin';
+  document.getElementById('nav-adminUsers').style.display=isAdmin?'flex':'none';
+  document.getElementById('nav-familyMgmt').style.display=isAdmin?'flex':'none';
+  var ejPanel=document.getElementById('emailConfigPanel');
+  if(ejPanel){ ejPanel.style.display=isAdmin?'block':'none'; if(isAdmin) _ejFill(); }
+  if(isAdmin){ switchPage('adminUsers'); } else { switchPage('parent'); }
+});
+</script>
+</body>
+</html>
