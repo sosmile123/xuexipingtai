@@ -26172,12 +26172,35 @@ function engUpdateGoalUI(){
 }
 
 
-// ---------- 语音朗读（简化移植版：有道真人发音 → 原生 speechSynthesis 兜底） ----------
+// ---------- 语音朗读 v2（多源 TTS 降级：有道 -> 百度翻译 -> 系统语音；超时/错误自动切换） ----------
 var _engVoices = [];
 function _engLoadVoices(){ try { if('speechSynthesis' in window){ _engVoices = window.speechSynthesis.getVoices(); } } catch(e){ _engVoices = []; } }
 if('speechSynthesis' in window){ _engLoadVoices(); window.speechSynthesis.onvoiceschanged = function(){ _engLoadVoices(); }; }
-var _engAudio = null;
-function _engPlayer(){ if(_engAudio) return _engAudio; var a=document.createElement('audio'); a.setAttribute('playsinline',''); a.setAttribute('webkit-playsinline',''); a.preload='auto'; a.style.display='none'; try{ document.body.appendChild(a); }catch(e){} _engAudio=a; return a; }
+var _engAudio = null; // 当前播放实例
+function _engStopAudio(){
+  try{ if(_engAudio){ _engAudio.onerror=null; _engAudio.onended=null; try{ _engAudio.pause(); }catch(e){} try{ _engAudio.removeAttribute('src'); }catch(e){} try{ _engAudio.load&&_engAudio.load(); }catch(e){} } }catch(e){}
+  _engAudio=null;
+}
+// 单源尝试：加载超时(4.5s)/加载失败 -> onFail；播放结束 -> onOk。每个调用独立 Audio 实例，避免快速切换 AbortError
+function _engTryPlay(url, onOk, onFail){
+  var settled=false, timer=null;
+  try{
+    var a = new Audio();
+    a.preload='auto';
+    if(a.setAttribute){ try{ a.setAttribute('playsinline',''); a.setAttribute('webkit-playsinline',''); }catch(e){} }
+    var loading=true;
+    timer=setTimeout(function(){ if(loading && !settled){ loading=false; settled=true; try{ a.pause(); }catch(e){} onFail(); } }, 4500);
+    a.onerror=function(){ if(!settled){ settled=true; clearTimeout(timer); onFail(); } };
+    a.onended=function(){ if(!settled){ settled=true; clearTimeout(timer); onOk(); } };
+    _engAudio=a;
+    a.src=url;
+    var p=a.play();
+    if(p && typeof p.then==='function'){
+      p.then(function(){ loading=false; clearTimeout(timer); /* 开始播放，等 ended 判定成功 */ })
+       .catch(function(e){ if(!settled){ settled=true; clearTimeout(timer); onFail(); } });
+    }
+  }catch(e){ if(!settled){ settled=true; try{ clearTimeout(timer); }catch(_){} onFail(); } }
+}
 function _speakEngNative(txt){
   if(!('speechSynthesis' in window)) return false;
   try{
@@ -26191,19 +26214,25 @@ function _speakEngNative(txt){
     return true;
   }catch(e){ return false; }
 }
-function speakEng(txt){
+// 统一入口：多源降级链播放（单词/句子/短文都走这里）
+function speakEng(txt, onOk, onFail){
   if(!txt) return;
-  try{
-    var yd = 'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(txt) + '&type=2';
-    var a = _engPlayer();
-    if('speechSynthesis' in window){ try{ window.speechSynthesis.cancel(); }catch(e){} }
-    a.src = yd;
-    var p = a.play();
-    if(p && typeof p.catch === 'function'){ p.catch(function(){ if(!_speakEngNative(txt)) showToast('当前环境暂无法播放语音，可看音标 ' + approxIPA(txt) + ' 自学发音'); }); }
-    return;
-  }catch(e){ if(!_speakEngNative(txt)) showToast('当前环境暂无法播放语音，可看音标 ' + approxIPA(txt) + ' 自学发音'); }
+  try{ if('speechSynthesis' in window){ window.speechSynthesis.cancel(); } }catch(e){}
+  _engStopAudio();
+  var urls = [
+    'https://dict.youdao.com/dictvoice?audio=' + encodeURIComponent(txt) + '&type=2',
+    'https://fanyi.baidu.com/gettts?lan=en&text=' + encodeURIComponent(txt) + '&spd=3&source=web'
+  ];
+  var i = 0;
+  (function next(){
+    if(i >= urls.length){
+      if(!_speakEngNative(txt)){ if(onFail) onFail(); showToast('当前环境暂无法播放语音，可看音标 ' + approxIPA(txt) + ' 自学发音'); }
+      else if(onOk) onOk();
+      return;
+    }
+    _engTryPlay(urls[i++], function(){ if(onOk) onOk(); }, function(){ next(); });
+  })();
 }
-
 // ---------- 背单词核心（卡片/标记/词库） ----------
 function renderEngCard(){
   engEnsureToday();
@@ -26526,23 +26555,77 @@ function computeStreak(){
 }
 
 
-// ---------- 听力练习（听音选义：词库随机抽词 -> 播放发音 -> 选中文释义） ----------
-let engListenState = { idx:0, score:0, done:false, list:[], todayDate:'', total:0, correct:0 };
+// ---------- 听力练习 v2（难度/年级匹配 + 单词/句子/短文三题型；数据 sw_englisten_<user>） ----------
+const engThemes = { daily:'日常用语', biz:'商务职场', travel:'旅行交通', food:'饮食', school:'校园学习', health:'健康', emotion:'情感表达', nature:'自然万物', tech:'科技', home:'居家生活', sport:'运动', social:'社交', work:'工作', science:'科学', extra:'拓展词汇' };
+const engDiffDecks = {
+  easy: ['daily','home','food'],
+  basic: ['daily','home','food','school','health','emotion'],
+  mid: ['school','health','emotion','nature','science','travel','sport'],
+  hard: ['biz','work','tech','social','science','extra']
+};
+const engDiffNames = { auto:'🎓 按年级', easy:'🌱 入门', basic:'📖 基础', mid:'🚀 进阶', hard:'🔥 挑战' };
+const engDiffTips = { auto:'自动匹配当前年级', easy:'日常 · 居家 · 饮食', basic:'校园 · 健康 · 情感', mid:'自然 · 科学 · 运动', hard:'商务 · 科技 · 工作' };
+let engListenState = { idx:0, score:0, done:false, list:[], todayDate:'', total:0, correct:0, diff:'auto' };
 function _engListenUserKey(){ try{ return (typeof session!=='undefined' && session && session.username) ? String(session.username) : 'guest'; }catch(e){ return 'guest'; } }
 function _engListenSave(){ try{ localStorage.setItem('sw_englisten_'+_engListenUserKey(), JSON.stringify(engListenState)); }catch(e){} }
-function _engListenLoad(){ try{ const raw=localStorage.getItem('sw_englisten_'+_engListenUserKey()); if(raw){ const s=JSON.parse(raw); if(s&&typeof s==='object'){ engListenState=Object.assign({ idx:0, score:0, done:false, list:[], todayDate:'', total:0, correct:0 }, s); } } }catch(e){} }
+function _engListenLoad(){ try{ const raw=localStorage.getItem('sw_englisten_'+_engListenUserKey()); if(raw){ const s=JSON.parse(raw); if(s&&typeof s==='object'){ engListenState=Object.assign({ idx:0, score:0, done:false, list:[], todayDate:'', total:0, correct:0, diff:'auto' }, s); } } }catch(e){} }
 function _engListenDate(){ const t=new Date(); return t.getFullYear()+'-'+(t.getMonth()+1)+'-'+t.getDate(); }
-function _engListenDeck(){ return (engDecks[engState.deck]||engDecks.daily||[]).filter(function(c){ return c && c.w && c.m; }); }
+// 难度 -> 主题 key 列表（auto 按年级：1-2 入门 / 3-4 基础 / 5-6 进阶 / 7-9 进阶+科学 / 高中及默认 挑战）
+function _engListenDeckKeys(diff){
+  if(diff==='auto'){
+    const g=gradeNum()||2;
+    if(g<=2) return engDiffDecks.easy.slice();
+    if(g<=4) return engDiffDecks.basic.slice();
+    if(g<=6) return engDiffDecks.mid.slice();
+    if(g<=9) return engDiffDecks.mid.concat(['science','tech']);
+    return engDiffDecks.hard.slice();
+  }
+  return (engDiffDecks[diff]||engDiffDecks.basic).slice();
+}
+function _engListenPool(){
+  const keys=_engListenDeckKeys(engListenState.diff||'auto');
+  const out=[];
+  keys.forEach(function(dk){ (engDecks[dk]||[]).forEach(function(c){ if(c && c.w && c.m) out.push(Object.assign({dk:dk}, c)); }); });
+  return out;
+}
+// 一轮 10 题：每 5 题一组 单词×2 / 句子×2 / 短文×1
 function _engListenBuild(){
-  const pool=_engListenDeck();
-  const count=Math.min(10,pool.length);
-  const arr=pool.slice().sort(function(){ return Math.random()-0.5; }).slice(0,count);
-  engListenState.list=arr.map(function(c){ return { w:c.w, p:c.p||'', m:c.m, e:c.e||'', t:c.t||'' }; });
+  const pool=_engListenPool();
+  const arr=pool.slice().sort(function(){ return Math.random()-0.5; });
+  const list=[]; let i=0;
+  while(list.length<10 && i<arr.length){
+    const slot=list.length%5;
+    const c=arr[i];
+    if(slot===4){ // 短文理解（每 5 题 1 篇：3 句连读选主题）
+      if(i+2<arr.length){
+        const seg=arr.slice(i,i+3);
+        list.push({ type:'passage', dk:c.dk, theme:(engThemes[c.dk]||c.dk),
+          segs:seg.map(function(s){ return { w:s.w, e:s.e||'', t:s.t||'' }; }) });
+        i+=3; continue;
+      }
+      // 素材不足 3 句：降级为句子题
+    }
+    if(slot===2 || slot===3){ // 句子听译
+      if(c.e && c.t){ list.push({ type:'sent', w:c.w, p:c.p||'', e:c.e, t:c.t, dk:c.dk }); i++; continue; }
+    }
+    // 单词听音
+    list.push({ type:'word', w:c.w, p:c.p||'', m:c.m, e:c.e||'', t:c.t||'' });
+    i++;
+  }
+  engListenState.list=list;
 }
 function _engListenOptions(q){
-  const pool=_engListenDeck();
-  const opts=[q.m]; const seen={}; seen[q.m]=1; let guard=0;
-  while(opts.length<4 && guard<80 && pool.length>1){ guard++; const c=pool[Math.floor(Math.random()*pool.length)]; if(c && c.m && !seen[c.m]){ seen[c.m]=1; opts.push(c.m); } }
+  if(q.type==='passage'){
+    const others=Object.keys(engThemes).filter(function(k){ return engThemes[k]!==q.theme; }).map(function(k){ return engThemes[k]; });
+    const opts=[q.theme];
+    while(opts.length<4 && others.length){ const t=others.splice(Math.floor(Math.random()*others.length),1)[0]; if(opts.indexOf(t)<0) opts.push(t); }
+    while(opts.length<4) opts.push('···');
+    return opts.slice().sort(function(){ return Math.random()-0.5; });
+  }
+  const want = (q.type==='sent') ? q.t : q.m;
+  const pool=_engListenPool();
+  const opts=[want]; const seen={}; seen[want]=1; let guard=0;
+  while(opts.length<4 && guard<80 && pool.length>1){ guard++; const c=pool[Math.floor(Math.random()*pool.length)]; const v=(q.type==='sent'?(c.t||''):(c.m||'')); if(v && !seen[v]){ seen[v]=1; opts.push(v); } }
   while(opts.length<4) opts.push('···');
   return opts.slice().sort(function(){ return Math.random()-0.5; });
 }
@@ -26551,10 +26634,21 @@ function renderEngListen(){
   const d=_engListenDate();
   if(engListenState.todayDate!==d){ engListenState.todayDate=d; engListenState.total=0; engListenState.correct=0; engListenState.done=false; _engListenSave(); }
   if(!engListenState.list || !engListenState.list.length || engListenState.done){ _engListenBuild(); engListenState.idx=0; engListenState.score=0; engListenState.done=false; }
+  // 难度条状态
+  const row=document.getElementById('lsnDiffRow');
+  if(row){ const btns=row.querySelectorAll('.eng-deck'); for(let i=0;i<btns.length;i++){ const d=btns[i].getAttribute('data-diff'); if(d===engListenState.diff) btns[i].classList.add('active'); else btns[i].classList.remove('active'); } }
+  const dl=document.getElementById('lsnDiffLabel'); if(dl) dl.textContent=(engDiffTips[engListenState.diff]||'')+' · 来自 '+(engListenState.diff==='auto'?'年级匹配':(engDiffNames[engListenState.diff]||''));
   const greet=document.getElementById('lsnGreeting'); if(greet) greet.textContent='👂 听力练习 · 听音选义';
   const sub=document.getElementById('lsnSub'); if(sub) sub.textContent='本轮 '+engListenState.list.length+' 题 · 已完成 '+engListenState.idx+' 题';
   _engListenRefreshStats();
   _engListenRenderQ();
+}
+function _engListenSetDiff(diff){
+  engListenState.diff=diff||'auto';
+  engListenState.done=false; engListenState.idx=0; engListenState.score=0;
+  _engListenBuild();
+  _engListenSave();
+  renderEngListen();
 }
 function _engListenRefreshStats(){
   const set=(id,v)=>{ const e=document.getElementById(id); if(e) e.textContent=v; };
@@ -26571,21 +26665,32 @@ function _engListenRenderQ(){
   const total=engListenState.list.length;
   const prog=document.getElementById('lsnProgress'); if(prog) prog.textContent=(engListenState.idx+1)+' / '+total;
   const opts=_engListenOptions(q);
+  const typeName = q.type==='passage' ? '📄 短文理解' : (q.type==='sent' ? '💬 句子听译' : '🔤 单词听音');
+  const hint = q.type==='passage' ? '点击播放，听完整段短文后选择它谈论的主题' : (q.type==='sent' ? '点击播放，听英文句子后选择正确的中文翻译' : '点击播放，听单词发音后选择对应的中文意思');
   let h='';
-  h+='<div style="text-align:center;padding:12px 0 4px">';
-  h+='<button class="btn btn-primary" style="font-size:17px;padding:13px 34px;border-radius:999px" onclick="_engListenPlay()">🔊 播放发音</button>';
-  h+='<div style="font-size:12px;color:var(--text3);margin-top:8px">点击播放，听读音后选择对应的中文意思</div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="background:var(--pri2);color:var(--pri);font-size:12px;padding:2px 12px;border-radius:999px">'+typeName+'</span><span style="font-size:12px;color:var(--text3)">'+hint+'</span></div>';
+  h+='<div style="text-align:center;padding:10px 0 4px">';
+  h+='<button class="btn btn-primary" style="font-size:17px;padding:13px 34px;border-radius:999px" onclick="_engListenPlay()">🔊 播放'+(q.type==='passage'?'短文':q.type==='sent'?'句子':'发音')+'</button>';
+  h+='<div style="font-size:12px;color:var(--text3);margin-top:8px" id="lsnPlayHint"></div>';
   h+='</div>';
   h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0 6px" id="lsnOpts">';
-  opts.forEach(function(m){
-    const isC=(m===q.m)?1:0;
-    h+='<button class="quiz-opt" data-correct="'+isC+'" onclick="_engListenPick(this)">'+m+'</button>';
+  opts.forEach(function(o){
+    const ans = q.type==='passage' ? q.theme : (q.type==='sent' ? q.t : q.m);
+    const isC=(o===ans)?1:0;
+    h+='<button class="quiz-opt" data-correct="'+isC+'" onclick="_engListenPick(this)">'+o+'</button>';
   });
   h+='</div>';
   h+='<div id="lsnFb" style="min-height:64px;padding:4px 0 8px"></div>';
   card.innerHTML=h;
 }
-function _engListenPlay(){ const q=engListenState.list[engListenState.idx]; if(q && q.w) speakEng(q.w); }
+function _engListenPlay(){
+  const q=engListenState.list[engListenState.idx]; if(!q) return;
+  const txt = q.type==='passage' ? q.segs.map(function(s){return s.e;}).filter(Boolean).join('. ') : (q.type==='sent' ? q.e : q.w);
+  const hint=document.getElementById('lsnPlayHint');
+  if(hint) hint.textContent='🔊 正在播放…';
+  speakEng(txt, function(){ if(hint) hint.textContent='▶ 播放完毕'+(q.type==='passage'?'，可再点重听':'，可点重听'); },
+    function(){ if(hint) hint.textContent='⚠ 当前网络发音源失败，已尝试备用发音'; });
+}
 function _engListenPick(btn){
   if(!btn) return;
   const q=engListenState.list[engListenState.idx]; if(!q) return;
@@ -26602,10 +26707,21 @@ function _engListenPick(btn){
   const fb=document.getElementById('lsnFb'); if(!fb) return;
   const last=(engListenState.idx+1>=engListenState.list.length);
   let fh='';
-  fh+='<div style="font-weight:700;font-size:14px;color:'+(isCorrect?'var(--grn)':'#f5222d')+'">'+(isCorrect?'✅ 回答正确':'❌ 正确答案：'+q.m)+'</div>';
-  fh+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.w+'</div>';
-  if(q.p) fh+='<div style="font-size:12px;color:var(--text3)">'+q.p+'</div>';
-  if(q.e) fh+='<div style="font-size:13px;color:var(--text2);margin-top:4px">'+q.e+(q.t?'<br><span style="color:var(--text3)">'+q.t+'</span>':'')+'</div>';
+  fh+='<div style="font-weight:700;font-size:14px;color:'+(isCorrect?'var(--grn)':'#f5222d')+'">'+(isCorrect?'✅ 回答正确':'❌ 正确答案：'+(q.type==='passage'?q.theme:(q.type==='sent'?q.t:q.m)))+'</div>';
+  if(q.type==='passage'){
+    fh+='<div style="font-size:13px;color:var(--text2);margin-top:6px">';
+    q.segs.forEach(function(s){
+      if(s.e) fh+='<div style="margin:3px 0">🔊 '+s.e+(s.t?'<br><span style="color:var(--text3)">'+s.t+'</span>':'')+'</div>';
+    });
+    fh+='</div>';
+  } else if(q.type==='sent'){
+    fh+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.e+'</div>';
+    if(q.t) fh+='<div style="font-size:13px;color:var(--text3)">'+q.t+'</div>';
+  } else {
+    fh+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.w+'</div>';
+    if(q.p) fh+='<div style="font-size:12px;color:var(--text3)">'+q.p+'</div>';
+    if(q.e) fh+='<div style="font-size:13px;color:var(--text2);margin-top:4px">'+q.e+(q.t?'<br><span style="color:var(--text3)">'+q.t+'</span>':'')+'</div>';
+  }
   fh+='<div style="margin-top:12px"><button class="btn btn-primary" style="width:100%" onclick="'+(last?'_engListenFinish()':'_engListenNext()')+'">'+(last?'🏁 完成本轮':'下一题 →')+'</button></div>';
   fb.innerHTML=fh;
 }
@@ -26629,7 +26745,6 @@ function _engListenFinish(){
   card.innerHTML=h;
 }
 function _engListenRestart(){ _engListenBuild(); engListenState.idx=0; engListenState.score=0; engListenState.done=false; _engListenSave(); _engListenRefreshStats(); _engListenRenderQ(); }
-
 function engQuiz(el, isCorrect){
   const opts = el.parentElement.querySelectorAll('.quiz-opt');
   opts.forEach(o=>o.style.pointerEvents='none');
@@ -27352,12 +27467,21 @@ function renderEnWork(el){
   <div class="subtab-content" id="en-listen">
     <div class="hero-banner" style="background:linear-gradient(135deg,#722ED1,#13C2C2)">
       <div class="greeting" id="lsnGreeting">👂 听力练习</div>
-      <div class="main-text">听发音 · 选释义</div>
+      <div class="main-text">听发音 · 练听力</div>
       <div class="sub-text" id="lsnSub">本轮 10 题</div>
       <div class="countdown-box" style="position:absolute;right:16px;top:50%;transform:translateY(-50%)">
         <div class="countdown-num" id="lsnScore" style="color:white">0</div>
         <div class="countdown-label" style="color:white;opacity:.8">今日答对</div>
       </div>
+    </div>
+
+    <div class="section-label">🎚️ 听力难度 <span style="float:right;font-size:12px;color:var(--text3)" id="lsnDiffLabel">自动匹配当前年级</span></div>
+    <div class="eng-decks" id="lsnDiffRow">
+      <button class="eng-deck active" data-diff="auto" onclick="_engListenSetDiff('auto')">🎓 按年级</button>
+      <button class="eng-deck" data-diff="easy" onclick="_engListenSetDiff('easy')">🌱 入门</button>
+      <button class="eng-deck" data-diff="basic" onclick="_engListenSetDiff('basic')">📖 基础</button>
+      <button class="eng-deck" data-diff="mid" onclick="_engListenSetDiff('mid')">🚀 进阶</button>
+      <button class="eng-deck" data-diff="hard" onclick="_engListenSetDiff('hard')">🔥 挑战</button>
     </div>
 
     <div class="study-stats">
@@ -27367,9 +27491,10 @@ function renderEnWork(el){
       <div class="ss-item"><div class="ss-num purple" id="lsnAcc">0%</div><div class="ss-label">正确率</div></div>
     </div>
 
-    <div class="section-label">🎧 听音选义 <span style="float:right;font-size:12px;color:var(--text3)" id="lsnProgress">1 / 10</span></div>
-    <div class="card" id="lsnCard" style="min-height:260px"></div>
+    <div class="section-label">🎧 听力练习 <span style="float:right;font-size:12px;color:var(--text3)" id="lsnProgress">1 / 10</span></div>
+    <div class="card" id="lsnCard" style="min-height:280px"></div>
   </div>
+
 
 </div>
 `;
