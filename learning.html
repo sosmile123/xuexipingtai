@@ -26555,7 +26555,7 @@ function computeStreak(){
 }
 
 
-// ---------- 听力练习 v2（难度/年级匹配 + 单词/句子/短文三题型；数据 sw_englisten_<user>） ----------
+// ---------- 听力练习 v2.1（难度/年级匹配 + 单词/句子/短文三题型 + 翻页回顾；数据 sw_englisten_<user>） ----------
 const engThemes = { daily:'日常用语', biz:'商务职场', travel:'旅行交通', food:'饮食', school:'校园学习', health:'健康', emotion:'情感表达', nature:'自然万物', tech:'科技', home:'居家生活', sport:'运动', social:'社交', work:'工作', science:'科学', extra:'拓展词汇' };
 const engDiffDecks = {
   easy: ['daily','home','food'],
@@ -26565,10 +26565,25 @@ const engDiffDecks = {
 };
 const engDiffNames = { auto:'🎓 按年级', easy:'🌱 入门', basic:'📖 基础', mid:'🚀 进阶', hard:'🔥 挑战' };
 const engDiffTips = { auto:'自动匹配当前年级', easy:'日常 · 居家 · 饮食', basic:'校园 · 健康 · 情感', mid:'自然 · 科学 · 运动', hard:'商务 · 科技 · 工作' };
-let engListenState = { idx:0, score:0, done:false, list:[], todayDate:'', total:0, correct:0, diff:'auto' };
+let engListenState = { v:2, idx:0, score:0, done:false, list:[], answers:{}, todayDate:'', total:0, correct:0, diff:'auto' };
+let _lsnReviewPage = 0; // 全题回顾翻页
 function _engListenUserKey(){ try{ return (typeof session!=='undefined' && session && session.username) ? String(session.username) : 'guest'; }catch(e){ return 'guest'; } }
 function _engListenSave(){ try{ localStorage.setItem('sw_englisten_'+_engListenUserKey(), JSON.stringify(engListenState)); }catch(e){} }
-function _engListenLoad(){ try{ const raw=localStorage.getItem('sw_englisten_'+_engListenUserKey()); if(raw){ const s=JSON.parse(raw); if(s&&typeof s==='object'){ engListenState=Object.assign({ idx:0, score:0, done:false, list:[], todayDate:'', total:0, correct:0, diff:'auto' }, s); } } }catch(e){} }
+function _engListenLoad(){
+  try{
+    const raw=localStorage.getItem('sw_englisten_'+_engListenUserKey());
+    if(raw){
+      const s=JSON.parse(raw);
+      if(s && typeof s==='object'){
+        if(s.v!==2){ // v1 旧数据（纯单词题）→ 强制重建
+          engListenState={ v:2, idx:0, score:0, done:false, list:[], answers:{}, todayDate:engListenState.todayDate, total:0, correct:0, diff:'auto' };
+          return;
+        }
+        engListenState=Object.assign({ v:2, idx:0, score:0, done:false, list:[], answers:{}, todayDate:'', total:0, correct:0, diff:'auto' }, s);
+      }
+    }
+  }catch(e){}
+}
 function _engListenDate(){ const t=new Date(); return t.getFullYear()+'-'+(t.getMonth()+1)+'-'+t.getDate(); }
 // 难度 -> 主题 key 列表（auto 按年级：1-2 入门 / 3-4 基础 / 5-6 进阶 / 7-9 进阶+科学 / 高中及默认 挑战）
 function _engListenDeckKeys(diff){
@@ -26588,34 +26603,52 @@ function _engListenPool(){
   keys.forEach(function(dk){ (engDecks[dk]||[]).forEach(function(c){ if(c && c.w && c.m) out.push(Object.assign({dk:dk}, c)); }); });
   return out;
 }
-// 一轮 10 题：每 5 题一组 单词×2 / 句子×2 / 短文×1
+// 一轮 12 题：单词×4 + 句子×5 + 短文×3（按题型分池取词，保证三种题型一定出现，内容更丰富）
 function _engListenBuild(){
   const pool=_engListenPool();
-  const arr=pool.slice().sort(function(){ return Math.random()-0.5; });
-  const list=[]; let i=0;
-  while(list.length<10 && i<arr.length){
-    const slot=list.length%5;
-    const c=arr[i];
-    if(slot===4){ // 短文理解（每 5 题 1 篇：3 句连读选主题）
-      if(i+2<arr.length){
-        const seg=arr.slice(i,i+3);
-        list.push({ type:'passage', dk:c.dk, theme:(engThemes[c.dk]||c.dk),
-          segs:seg.map(function(s){ return { w:s.w, e:s.e||'', t:s.t||'' }; }) });
-        i+=3; continue;
-      }
-      // 素材不足 3 句：降级为句子题
+  const wordPool=pool.filter(function(c){ return c.m; });
+  const sentPool=pool.filter(function(c){ return c.e && c.t; });
+  const passPool=pool.filter(function(c){ return c.e; });
+  const wA=wordPool.slice().sort(function(){ return Math.random()-0.5; });
+  const sA=sentPool.slice().sort(function(){ return Math.random()-0.5; });
+  const pA=passPool.slice().sort(function(){ return Math.random()-0.5; });
+  const list=[]; let wi=0, si=0, pi=0;
+  const seq=['word','sent','word','passage','sent','word','passage','sent','word','sent','passage','word'];
+  while(list.length<12){
+    const slot=seq[list.length]||'word';
+    if(slot==='passage' && pi+2<pA.length){
+      const seg=pA.slice(pi,pi+3); pi+=3;
+      const detail=(Math.random()<0.5)?(1+Math.floor(Math.random()*3)):0; // 0=主题题，1-3=细节题（问第N句）
+      list.push({ type:'passage', dk:seg[0].dk, theme:(engThemes[seg[0].dk]||seg[0].dk), qtype:(detail?'detail':'topic'), detailIdx:(detail?detail-1:0),
+        segs:seg.map(function(s){ return { w:s.w, e:s.e||'', t:s.t||'' }; }) });
+      continue;
     }
-    if(slot===2 || slot===3){ // 句子听译
-      if(c.e && c.t){ list.push({ type:'sent', w:c.w, p:c.p||'', e:c.e, t:c.t, dk:c.dk }); i++; continue; }
+    if(slot==='sent' && si<sA.length){
+      const c=sA[si++];
+      list.push({ type:'sent', w:c.w, p:c.p||'', e:c.e, t:c.t, dk:c.dk });
+      continue;
     }
-    // 单词听音
-    list.push({ type:'word', w:c.w, p:c.p||'', m:c.m, e:c.e||'', t:c.t||'' });
-    i++;
+    if(wi<wA.length){
+      const c=wA[wi++];
+      list.push({ type:'word', w:c.w, p:c.p||'', m:c.m, e:c.e||'', t:c.t||'' });
+      continue;
+    }
+    if(wordPool.length){ const c=wordPool[list.length%wordPool.length]; list.push({ type:'word', w:c.w, p:c.p||'', m:c.m, e:c.e||'', t:c.t||'' }); continue; }
+    break;
   }
   engListenState.list=list;
 }
+function _engListenAns(q){ return q.type==='passage' ? (q.qtype==='detail' ? (q.segs[q.detailIdx]?q.segs[q.detailIdx].t:'') : q.theme) : (q.type==='sent' ? q.t : q.m); }
 function _engListenOptions(q){
   if(q.type==='passage'){
+    if(q.qtype==='detail'){
+      const want=q.segs[q.detailIdx]?q.segs[q.detailIdx].t:'';
+      const pool=_engListenPool();
+      const opts=[want]; const seen={}; seen[want]=1; let guard=0;
+      while(opts.length<4 && guard<80){ guard++; const cc=pool[Math.floor(Math.random()*pool.length)]; const v=cc.t||''; if(v && !seen[v]){ seen[v]=1; opts.push(v); } }
+      while(opts.length<4) opts.push('···');
+      return opts.slice().sort(function(){ return Math.random()-0.5; });
+    }
     const others=Object.keys(engThemes).filter(function(k){ return engThemes[k]!==q.theme; }).map(function(k){ return engThemes[k]; });
     const opts=[q.theme];
     while(opts.length<4 && others.length){ const t=others.splice(Math.floor(Math.random()*others.length),1)[0]; if(opts.indexOf(t)<0) opts.push(t); }
@@ -26632,20 +26665,20 @@ function _engListenOptions(q){
 function renderEngListen(){
   _engListenLoad();
   const d=_engListenDate();
-  if(engListenState.todayDate!==d){ engListenState.todayDate=d; engListenState.total=0; engListenState.correct=0; engListenState.done=false; _engListenSave(); }
-  if(!engListenState.list || !engListenState.list.length || engListenState.done){ _engListenBuild(); engListenState.idx=0; engListenState.score=0; engListenState.done=false; }
+  if(engListenState.todayDate!==d){ engListenState.todayDate=d; engListenState.total=0; engListenState.correct=0; engListenState.done=false; engListenState.answers={}; _engListenSave(); }
+  if(!engListenState.list || !engListenState.list.length || engListenState.done){ _engListenBuild(); engListenState.idx=0; engListenState.score=0; engListenState.done=false; engListenState.answers={}; }
   // 难度条状态
   const row=document.getElementById('lsnDiffRow');
-  if(row){ const btns=row.querySelectorAll('.eng-deck'); for(let i=0;i<btns.length;i++){ const d=btns[i].getAttribute('data-diff'); if(d===engListenState.diff) btns[i].classList.add('active'); else btns[i].classList.remove('active'); } }
+  if(row){ const btns=row.querySelectorAll('.eng-deck'); for(let i=0;i<btns.length;i++){ const dd=btns[i].getAttribute('data-diff'); if(dd===engListenState.diff) btns[i].classList.add('active'); else btns[i].classList.remove('active'); } }
   const dl=document.getElementById('lsnDiffLabel'); if(dl) dl.textContent=(engDiffTips[engListenState.diff]||'')+' · 来自 '+(engListenState.diff==='auto'?'年级匹配':(engDiffNames[engListenState.diff]||''));
-  const greet=document.getElementById('lsnGreeting'); if(greet) greet.textContent='👂 听力练习 · 听音选义';
-  const sub=document.getElementById('lsnSub'); if(sub) sub.textContent='本轮 '+engListenState.list.length+' 题 · 已完成 '+engListenState.idx+' 题';
+  const greet=document.getElementById('lsnGreeting'); if(greet) greet.textContent='👂 听力练习 · 三题型';
+  const sub=document.getElementById('lsnSub'); if(sub) sub.textContent='单词听音 · 句子听译 · 短文理解';
   _engListenRefreshStats();
   _engListenRenderQ();
 }
 function _engListenSetDiff(diff){
   engListenState.diff=diff||'auto';
-  engListenState.done=false; engListenState.idx=0; engListenState.score=0;
+  engListenState.done=false; engListenState.idx=0; engListenState.score=0; engListenState.answers={};
   _engListenBuild();
   _engListenSave();
   renderEngListen();
@@ -26658,29 +26691,70 @@ function _engListenRefreshStats(){
   set('lsnAcc', engListenState.total>0 ? Math.round(engListenState.correct/engListenState.total*100)+'%' : '0%');
   set('lsnScore', engListenState.correct);
 }
+function _engListenQTitle(q){
+  if(q.type==='passage') return (q.qtype==='detail' ? '📄 短文细节（第'+(q.detailIdx+1)+'句）' : '📄 短文理解（主题）');
+  return q.type==='sent' ? '💬 句子听译' : '🔤 单词听音';
+}
 function _engListenRenderQ(){
   const card=document.getElementById('lsnCard'); if(!card) return;
   if(engListenState.done || !engListenState.list.length || engListenState.idx>=engListenState.list.length){ _engListenFinish(); return; }
   const q=engListenState.list[engListenState.idx];
   const total=engListenState.list.length;
   const prog=document.getElementById('lsnProgress'); if(prog) prog.textContent=(engListenState.idx+1)+' / '+total;
-  const opts=_engListenOptions(q);
-  const typeName = q.type==='passage' ? '📄 短文理解' : (q.type==='sent' ? '💬 句子听译' : '🔤 单词听音');
-  const hint = q.type==='passage' ? '点击播放，听完整段短文后选择它谈论的主题' : (q.type==='sent' ? '点击播放，听英文句子后选择正确的中文翻译' : '点击播放，听单词发音后选择对应的中文意思');
+  const answered = (engListenState.answers[engListenState.idx] !== undefined);
+  const isRight = engListenState.answers[engListenState.idx] === 1;
+  const hint = q.type==='passage' ? (q.qtype==='detail' ? '听短文后选择第'+(q.detailIdx+1)+'句的中文意思' : '听完整段短文后选择它谈论的主题') : (q.type==='sent' ? '听英文句子后选择正确的中文翻译' : '听单词发音后选择对应的中文意思');
+  const playTxt = q.type==='passage' ? q.segs.map(function(s){return s.e;}).filter(Boolean).join('. ') : (q.type==='sent' ? q.e : q.w);
   let h='';
-  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="background:var(--pri2);color:var(--pri);font-size:12px;padding:2px 12px;border-radius:999px">'+typeName+'</span><span style="font-size:12px;color:var(--text3)">'+hint+'</span></div>';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span style="background:var(--pri2);color:var(--pri);font-size:12px;padding:2px 12px;border-radius:999px">'+_engListenQTitle(q)+'</span><span style="font-size:12px;color:var(--text3)">'+hint+'</span></div>';
   h+='<div style="text-align:center;padding:10px 0 4px">';
   h+='<button class="btn btn-primary" style="font-size:17px;padding:13px 34px;border-radius:999px" onclick="_engListenPlay()">🔊 播放'+(q.type==='passage'?'短文':q.type==='sent'?'句子':'发音')+'</button>';
   h+='<div style="font-size:12px;color:var(--text3);margin-top:8px" id="lsnPlayHint"></div>';
   h+='</div>';
-  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0 6px" id="lsnOpts">';
-  opts.forEach(function(o){
-    const ans = q.type==='passage' ? q.theme : (q.type==='sent' ? q.t : q.m);
-    const isC=(o===ans)?1:0;
-    h+='<button class="quiz-opt" data-correct="'+isC+'" onclick="_engListenPick(this)">'+o+'</button>';
-  });
+  if(answered){
+    // 已答回看：显示作答结果
+    h+='<div style="text-align:center;font-size:14px;font-weight:700;margin:6px 0;color:'+(isRight?'var(--grn)':'#f5222d')+'">'+(isRight?'✅ 你答对了':'❌ 你答错了')+' · 正确答案：'+_engListenAns(q)+'</div>';
+  } else {
+    h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:12px 0 6px" id="lsnOpts">';
+    const opts=_engListenOptions(q);
+    opts.forEach(function(o){
+      const isC=(o===_engListenAns(q))?1:0;
+      h+='<button class="quiz-opt" data-correct="'+isC+'" onclick="_engListenPick(this)">'+o+'</button>';
+    });
+    h+='</div>';
+  }
+  h+='<div id="lsnFb">';
+  // 原文与翻译（回看时也展示）
+  if(q.type==='passage'){
+    h+='<div style="font-size:13px;color:var(--text2);margin-top:6px">';
+    q.segs.forEach(function(s){
+      if(s.e) h+='<div style="margin:3px 0">🔊 '+s.e+(s.t?'<br><span style="color:var(--text3)">'+s.t+'</span>':'')+'</div>';
+    });
+    h+='</div>';
+    if(q.qtype==='topic') h+='<div style="font-size:13px;color:var(--pri);font-weight:600;margin-top:4px">主题：'+q.theme+'</div>';
+  } else if(q.type==='sent'){
+    h+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.e+'</div>';
+    if(q.t) h+='<div style="font-size:13px;color:var(--text3)">'+q.t+'</div>';
+  } else {
+    h+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.w+'</div>';
+    if(q.p) h+='<div style="font-size:12px;color:var(--text3)">'+q.p+'</div>';
+    if(q.e) h+='<div style="font-size:13px;color:var(--text2);margin-top:4px">'+q.e+(q.t?'<br><span style="color:var(--text3)">'+q.t+'</span>':'')+'</div>';
+  }
   h+='</div>';
-  h+='<div id="lsnFb" style="min-height:64px;padding:4px 0 8px"></div>';
+  // 作答后的下一步按钮
+  if(!answered){
+    const last=(engListenState.idx+1>=engListenState.list.length);
+    h+='<div style="margin-top:12px"><button class="btn btn-primary" style="width:100%" onclick="'+(last?'_engListenFinish()':'_engListenNext()')+'">'+(last?'🏁 完成本轮':'下一题 →')+'</button></div>';
+  } else if(isRight===false){
+    h+='<div style="margin-top:12px"><button class="btn btn-primary" style="width:100%" onclick="'+(engListenState.idx+1>=engListenState.list.length?'_engListenFinish()':'_engListenNext()')+'">'+(engListenState.idx+1>=engListenState.list.length?'🏁 完成本轮':'下一题 →')+'</button></div>';
+  }
+  // 翻页导航（上一题/页码/下一题）
+  h+='<div style="display:flex;align-items:center;justify-content:center;gap:12px;margin-top:14px;padding-top:10px;border-top:1px dashed var(--border)">';
+  h+='<button class="btn btn-outline" style="font-size:13px;padding:6px 16px" onclick="_engListenPrev()"'+(engListenState.idx<=0?' disabled':'')+'>‹ 上一题</button>';
+  h+='<span style="font-size:13px;color:var(--text2)">第 '+(engListenState.idx+1)+' / '+total+' 题'+(answered?' · 已答':' · 未答')+'</span>';
+  h+='<button class="btn btn-outline" style="font-size:13px;padding:6px 16px" onclick="_engListenGo('+(engListenState.idx+1)+')"'+(engListenState.idx+1>=total?' disabled':'')+'>下一题 ›</button>';
+  h+='</div>';
+  h+='<div style="text-align:center;margin-top:8px"><a style="font-size:12px;color:var(--pri);cursor:pointer" onclick="_engListenReview()">📖 查看本轮全部题目</a></div>';
   card.innerHTML=h;
 }
 function _engListenPlay(){
@@ -26694,7 +26768,9 @@ function _engListenPlay(){
 function _engListenPick(btn){
   if(!btn) return;
   const q=engListenState.list[engListenState.idx]; if(!q) return;
+  if(engListenState.answers[engListenState.idx]!==undefined) return; // 已答不可改
   const isCorrect = (btn.dataset && btn.dataset.correct==='1');
+  engListenState.answers[engListenState.idx]=isCorrect?1:0;
   const opts=document.querySelectorAll('#lsnOpts .quiz-opt');
   opts.forEach(function(o){ o.style.pointerEvents='none'; });
   if(isCorrect){ btn.classList.add('correct'); btn.innerHTML+=' ✓'; }
@@ -26704,47 +26780,87 @@ function _engListenPick(btn){
   }
   engListenState.total+=1; engListenState.correct+=(isCorrect?1:0); engListenState.score+=(isCorrect?1:0);
   _engListenSave(); _engListenRefreshStats();
-  const fb=document.getElementById('lsnFb'); if(!fb) return;
-  const last=(engListenState.idx+1>=engListenState.list.length);
-  let fh='';
-  fh+='<div style="font-weight:700;font-size:14px;color:'+(isCorrect?'var(--grn)':'#f5222d')+'">'+(isCorrect?'✅ 回答正确':'❌ 正确答案：'+(q.type==='passage'?q.theme:(q.type==='sent'?q.t:q.m)))+'</div>';
-  if(q.type==='passage'){
-    fh+='<div style="font-size:13px;color:var(--text2);margin-top:6px">';
-    q.segs.forEach(function(s){
-      if(s.e) fh+='<div style="margin:3px 0">🔊 '+s.e+(s.t?'<br><span style="color:var(--text3)">'+s.t+'</span>':'')+'</div>';
-    });
-    fh+='</div>';
-  } else if(q.type==='sent'){
-    fh+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.e+'</div>';
-    if(q.t) fh+='<div style="font-size:13px;color:var(--text3)">'+q.t+'</div>';
-  } else {
-    fh+='<div style="font-size:14px;color:var(--text1);margin-top:6px;font-weight:600">'+q.w+'</div>';
-    if(q.p) fh+='<div style="font-size:12px;color:var(--text3)">'+q.p+'</div>';
-    if(q.e) fh+='<div style="font-size:13px;color:var(--text2);margin-top:4px">'+q.e+(q.t?'<br><span style="color:var(--text3)">'+q.t+'</span>':'')+'</div>';
-  }
-  fh+='<div style="margin-top:12px"><button class="btn btn-primary" style="width:100%" onclick="'+(last?'_engListenFinish()':'_engListenNext()')+'">'+(last?'🏁 完成本轮':'下一题 →')+'</button></div>';
-  fb.innerHTML=fh;
+  _engListenRenderQ(); // 重渲染显示反馈与导航
 }
-function _engListenNext(){ engListenState.idx+=1; _engListenSave(); _engListenRenderQ(); }
+function _engListenPrev(){ if(engListenState.idx>0){ engListenState.idx-=1; _engListenSave(); _engListenRenderQ(); } }
+function _engListenGo(i){ if(i>=0 && i<engListenState.list.length){ engListenState.idx=i; _engListenSave(); _engListenRenderQ(); } }
+function _engListenNext(){ if(engListenState.idx+1<engListenState.list.length){ engListenState.idx+=1; _engListenSave(); _engListenRenderQ(); } else { _engListenFinish(); } }
 function _engListenFinish(){
   engListenState.done=true;
   try{ engEnsureToday(); if(!engState.studyDates.includes(engState.todayDate)) engState.studyDates.push(engState.todayDate); wbEngSave(); }catch(e){}
   _engListenSave(); _engListenRefreshStats();
   const card=document.getElementById('lsnCard'); if(!card) return;
-  const total=engListenState.list.length; const sc=engListenState.score;
+  const total=engListenState.list.length;
+  const doneN=Object.keys(engListenState.answers||{}).length;
+  const sc=engListenState.score;
   const acc=total>0?Math.round(sc/total*100):0;
   const stars=acc>=90?'⭐⭐⭐':acc>=70?'⭐⭐':acc>=50?'⭐':'💪 继续加油';
   let h='<div style="text-align:center;padding:22px 10px">';
   h+='<div style="font-size:40px">🎉</div>';
   h+='<div style="font-size:18px;font-weight:700;margin:10px 0 4px">本轮听力完成！</div>';
-  h+='<div style="font-size:13px;color:var(--text2)">答对 '+sc+' / '+total+' 题 · 正确率 '+acc+'%</div>';
+  h+='<div style="font-size:13px;color:var(--text2)">答对 '+sc+' / '+total+' 题 · 正确率 '+acc+'%'+(doneN<total?' · 已答 '+doneN+' 题':'')+'</div>';
   h+='<div style="font-size:26px;margin:12px 0">'+stars+'</div>';
   h+='<div style="font-size:12px;color:var(--text3);margin-bottom:12px">今日累计练习 '+engListenState.total+' 题 · 答对 '+engListenState.correct+' 题</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+  h+='<button class="btn btn-primary" style="width:100%" onclick="_engListenRestart()">🔄 再来一轮</button>';
+  h+='<button class="btn btn-outline" style="width:100%" onclick="_engListenReview()">📖 查看全部题目</button>';
+  h+='</div>';
+  h+='</div>';
+  card.innerHTML=h;
+}
+// 全题回顾：分页浏览本轮所有题（每页 3 题），可翻页学习
+function _engListenReview(){
+  _lsnReviewPage=0;
+  _engListenReviewRender();
+}
+function _engListenReviewRender(){
+  const card=document.getElementById('lsnCard'); if(!card) return;
+  const list=engListenState.list||[];
+  if(!list.length){ card.innerHTML='<div class="empty-state"><p>暂无题目，先做一轮听力吧</p></div>'; return; }
+  const per=3;
+  const pages=Math.max(1,Math.ceil(list.length/per));
+  if(_lsnReviewPage>=pages) _lsnReviewPage=pages-1;
+  const start=_lsnReviewPage*per;
+  const end=Math.min(start+per,list.length);
+  let h='';
+  h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="background:var(--pri2);color:var(--pri);font-size:12px;padding:2px 12px;border-radius:999px">📖 本轮全部题目</span><span style="font-size:12px;color:var(--text3)">'+list.length+' 题 · 单词/句子/短文 · 可翻页复习</span><span style="margin-left:auto;font-size:12px;color:var(--text3)">第 '+(start+1)+'-'+end+' 题</span></div>';
+  for(let i=start;i<end;i++){
+    const q=list[i];
+    const answered=(engListenState.answers[i]!==undefined);
+    const isRight=engListenState.answers[i]===1;
+    h+='<div class="card" style="padding:14px;margin-bottom:10px;background:'+(answered?(isRight?'#f6fff9':'#fff7f7'):'#fafbfe')+'">';
+    h+='<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="background:var(--pri2);color:var(--pri);font-size:11px;padding:1px 10px;border-radius:999px">第 '+(i+1)+' 题 · '+_engListenQTitle(q)+'</span>'+(answered?'<span style="font-size:11px;color:'+(isRight?'var(--grn)':'#f5222d')+'">'+(isRight?'✓ 答对':'✗ 答错')+'</span>':'<span style="font-size:11px;color:var(--text3)">未作答</span>')+'</div>';
+    h+='<div style="display:flex;align-items:center;gap:8px"><button class="btn btn-outline" style="font-size:12px;padding:4px 12px;border-radius:999px" onclick="_engListenPlayReview('+i+')">🔊 播放</button><span style="font-size:13px;color:var(--text1);font-weight:600">'+(q.type==='word'?q.w:(q.type==='sent'?q.e:'📄 '+q.theme))+'</span></div>';
+    if(q.type==='passage'){
+      q.segs.forEach(function(s){ if(s.e) h+='<div style="font-size:12.5px;color:var(--text2);margin:3px 0 0 20px">'+s.e+'<span style="color:var(--text3)"> —— '+s.t+'</span></div>'; });
+      h+='<div style="font-size:12px;color:var(--pri);font-weight:600;margin:4px 0 0 20px">主题：'+q.theme+'</div>';
+    } else if(q.type==='sent'){
+      h+='<div style="font-size:12.5px;color:var(--text3);margin:2px 0 0 20px">'+q.t+'</div>';
+    } else {
+      if(q.p) h+='<div style="font-size:12px;color:var(--text3);margin:2px 0 0 20px">'+q.p+'</div>';
+      if(q.e) h+='<div style="font-size:12.5px;color:var(--text2);margin:2px 0 0 20px">'+q.e+(q.t?' —— '+q.t:'')+'</div>';
+    }
+    h+='</div>';
+  }
+  // 翻页
+  h+='<div style="display:flex;align-items:center;justify-content:center;gap:14px;margin:8px 0">';
+  h+='<button class="btn btn-outline" style="font-size:13px;padding:6px 16px" onclick="_lsnReviewPage>0?_lsnReviewPage--:0;_engListenReviewRender()"'+(start<=0?' disabled':'')+'>‹ 上一页</button>';
+  h+='<span style="font-size:13px;color:var(--text2)">'+(_lsnReviewPage+1)+' / '+pages+' 页</span>';
+  h+='<button class="btn btn-outline" style="font-size:13px;padding:6px 16px" onclick="_lsnReviewPage<'+(pages-1)+'?_lsnReviewPage++:0;_engListenReviewRender()"'+(end>=list.length?' disabled':'')+'>下一页 ›</button>';
+  h+='</div>';
+  h+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">';
+  h+='<button class="btn btn-outline" style="width:100%" onclick="_engListenBackToQuiz()">⬅ 返回答题</button>';
   h+='<button class="btn btn-primary" style="width:100%" onclick="_engListenRestart()">🔄 再来一轮</button>';
   h+='</div>';
   card.innerHTML=h;
 }
-function _engListenRestart(){ _engListenBuild(); engListenState.idx=0; engListenState.score=0; engListenState.done=false; _engListenSave(); _engListenRefreshStats(); _engListenRenderQ(); }
+function _engListenPlayReview(i){
+  const q=engListenState.list[i]; if(!q) return;
+  const txt = q.type==='passage' ? q.segs.map(function(s){return s.e;}).filter(Boolean).join('. ') : (q.type==='sent' ? q.e : q.w);
+  speakEng(txt);
+}
+function _engListenBackToQuiz(){ engListenState.done=false; _engListenSave(); _engListenRenderQ(); }
+function _engListenRestart(){ _engListenBuild(); engListenState.idx=0; engListenState.score=0; engListenState.done=false; engListenState.answers={}; _lsnReviewPage=0; _engListenSave(); _engListenRefreshStats(); _engListenRenderQ(); }
 function engQuiz(el, isCorrect){
   const opts = el.parentElement.querySelectorAll('.quiz-opt');
   opts.forEach(o=>o.style.pointerEvents='none');
