@@ -114,6 +114,27 @@
     }
   }
 
+  // 账号级合并：云端账号 ∪ 本地账号；同名账号以本地为准（本地刚操作过，避免云端旧数据回灌）
+  // 核心修复：之前 push 用「本地整体覆盖云端」、版本号用 Date.now 比较，导致后启动的空设备会把云端已有账号整体抹掉 → 反复「没注册」。
+  // 改为账号并集后，无论哪端先写，最终都收敛为账号并集，互不删除，跨设备不再丢失。
+  function mergeUsers(localStr, cloudStr) {
+    try {
+      var L = JSON.parse(localStr || '{}');
+      var C = JSON.parse(cloudStr || '{}');
+      var M = {};
+      var keys = {};
+      var k;
+      for (k in L) keys[k] = 1;
+      for (k in C) keys[k] = 1;
+      for (k in keys) {
+        if (L[k] && !C[k]) M[k] = L[k];
+        else if (C[k] && !L[k]) M[k] = C[k];
+        else M[k] = L[k]; // 都有：本地优先
+      }
+      return JSON.stringify(M);
+    } catch (e) { return localStr || cloudStr || '{}'; }
+  }
+
   // 读取单个 key：返回 { value, version, ok } 或 { __error: true }
   // ok=true 表示请求成功（即使云端无数据），ok=false 表示网络错误
   function readKey(key) {
@@ -140,8 +161,7 @@
     }).then(function (r) { return r.ok; }).catch(function () { return false; });
   }
 
-  // 拉取：云端版本更新则应用到本地
-  // options.silent = true 时不 reload 页面（供切页面/手动同步场景使用，由调用方处理 re-render）
+  // 拉取：云端数据合并到本地（账号不丢失，跨设备收敛）
   function pull(options) {
     options = options || {};
     if (_pulling) return Promise.resolve(false);
@@ -150,28 +170,25 @@
     var fetchOk = false; // 至少一次请求成功（区分"云端无数据"和"网络失败"）
     var tasks = SYNC_KEYS.map(function (key) {
       return readKey(key).then(function (item) {
-        if (!item) return;
-        if (item.__error) return; // 网络错误，跳过
+        if (!item || item.__error) return;
         fetchOk = true; // 请求成功（无论云端是否有数据，全新部署也算成功）
-        if (item.value == null || item.version == null) return; // 云端无此 key
-        var rv = parseInt(item.version || '0', 10) || 0;
-        if (rv > getVer(key)) {
+        if (item.value == null) return; // 云端无此 key
+        var local = LS.getItem(key);
+        var merged = (key === 'sw_users') ? mergeUsers(local, item.value) : ((local != null) ? local : item.value);
+        if (merged !== local) {
           _applyingRemote = true;
-          if (item.value != null) _origSet(key, String(item.value));
+          _origSet(key, merged);
           _applyingRemote = false;
-          setVer(key, rv);
-          _setFp(key, _fp(String(item.value))); // 同步指纹：避免 pull 后把刚拉到的数据再推回去推高版本号
           changed = true;
         }
+        setVer(key, parseInt(item.version || '0', 10) || 0);
+        _setFp(key, _fp(merged)); // 同步指纹：避免 pull 后把刚拉到的数据再推回去推高版本号
       });
     });
     return Promise.all(tasks).then(function () {
       _pulling = false;
-      // 仅在网络正常时才标记"拉取完成"并推送，防止网络故障时默认数据覆盖云端
-      if (fetchOk) {
-        _firstPullDone = true;
-        push(); // 把本地合并后的数据推送到云端
-      }
+      // 仅在网络正常时才标记"拉取完成"，防止网络故障时默认数据覆盖云端
+      if (fetchOk) _firstPullDone = true;
       // 静默模式：不 reload，让调用方自行 re-render 当前页
       // 防抖：1.5 秒内只允许 reload 一次，防止多标签页/循环触发无限刷新
       if (changed && !options.silent && LS.getItem('sw_session')) {
@@ -196,17 +213,23 @@
   function _fpKey(k) { return 'sw_sync_fp_' + k; }
   function _getFp(k) { try { return LS.getItem(_fpKey(k)) || ''; } catch (e) { return ''; } }
   function _setFp(k, fp) { try { _origSet(_fpKey(k), fp); } catch (e) {} }
+  // 推送：本地数据合并云端后写回（账号不丢失，跨设备收敛）。空设备推送不会删除云端已有账号。
   function push() {
     var tasks = SYNC_KEYS.map(function (key) {
-      var val = LS.getItem(key);
-      if (val == null) return Promise.resolve(true); // 本地无此 key，跳过
-      var fp = _fp(val);
+      var local = LS.getItem(key);
+      if (local == null) return Promise.resolve(true); // 本地无此 key，跳过
+      var fp = _fp(local);
       // 内容与上次成功推送相同 → 不写云端（版本号不再虚高，循环就此终止）
       if (_getFp(key) === fp) return Promise.resolve(true);
-      var v = Date.now();
-      return writeKey(key, val, v).then(function (ok) {
-        if (ok) { setVer(key, v); _setFp(key, fp); }
-        return ok;
+      // read 云端当前值，与本地合并（账号并集）后再写回，避免本地空数据覆盖云端真实账号
+      return readKey(key).then(function (item) {
+        var cloud = (item && item.value != null) ? item.value : null;
+        var merged = (key === 'sw_users') ? mergeUsers(local, cloud) : local;
+        var v = Date.now();
+        return writeKey(key, merged, v).then(function (ok) {
+          if (ok) { setVer(key, v); _setFp(key, _fp(merged)); }
+          return ok;
+        });
       });
     });
     return Promise.all(tasks).then(function (rs) {
