@@ -556,7 +556,15 @@ function loadParentPage(){
   var families=JSON.parse(localStorage.getItem('sw_families')||'{}');
   var myFamily=null;
   for(var fk in families){ if(families[fk].members&&families[fk].members.indexOf(session.username)>=0){ myFamily=fk; break; } }
-  if(!myFamily){ document.getElementById('parentNotReady').style.display='block'; document.getElementById('parentReady').style.display='none'; return; }
+  if(!myFamily){
+    // 兜底：本地家庭数据可能过期/未拉到，先从云端拉一次再重试（解决跨设备家长看不到学生）
+    if(!window._parentPullRetried){
+      window._parentPullRetried=true;
+      try{ if(window.SyncHub&&window.SyncHub.pull){ window.SyncHub.pull({silent:true}).then(function(){ loadParentPage(); }); return; } }catch(e){}
+    }
+    document.getElementById('parentNotReady').style.display='block'; document.getElementById('parentReady').style.display='none'; return;
+  }
+  window._parentPullRetried=false;
   document.getElementById('parentNotReady').style.display='none'; document.getElementById('parentReady').style.display='block';
   document.getElementById('parentFamilyInfo').innerHTML='🏠 <b>'+myFamily+'</b> · 共 '+families[myFamily].members.length+' 位成员';
   renderParentStudentList();
