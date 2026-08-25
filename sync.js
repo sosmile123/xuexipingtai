@@ -135,6 +135,28 @@
     } catch (e) { return localStr || cloudStr || '{}'; }
   }
 
+  // 家庭级合并：本地家庭 ∪ 云端家庭（家庭以名称为键，双方取并集，同名以本地为准）
+  // 核心修复：之前 sw_families 走「本地非空即忽略云端 / 推送时本地直接覆盖云端」，
+  // 导致设备 A 建了家庭，设备 B（本地空 {}）永远拉不到；且 B 一旦推送就把云端家庭整体清空 → 「家长看不到学生」。
+  // 改为并集合并后，无论哪端先写，最终都收敛为家庭并集，互不删除，跨设备可见。
+  function mergeFamilies(localStr, cloudStr) {
+    try {
+      var L = JSON.parse(localStr || '{}');
+      var C = JSON.parse(cloudStr || '{}');
+      var M = {};
+      var keys = {};
+      var k;
+      for (k in L) keys[k] = 1;
+      for (k in C) keys[k] = 1;
+      for (k in keys) {
+        if (L[k] && !C[k]) M[k] = L[k];
+        else if (C[k] && !L[k]) M[k] = C[k];
+        else M[k] = L[k]; // 都有：本地优先
+      }
+      return JSON.stringify(M);
+    } catch (e) { return localStr || cloudStr || '{}'; }
+  }
+
   // 读取单个 key：返回 { value, version, ok } 或 { __error: true }
   // ok=true 表示请求成功（即使云端无数据），ok=false 表示网络错误
   function readKey(key) {
@@ -174,7 +196,7 @@
         fetchOk = true; // 请求成功（无论云端是否有数据，全新部署也算成功）
         if (item.value == null) return; // 云端无此 key
         var local = LS.getItem(key);
-        var merged = (key === 'sw_users') ? mergeUsers(local, item.value) : ((local != null) ? local : item.value);
+        var merged = (key === 'sw_users') ? mergeUsers(local, item.value) : (key === 'sw_families') ? mergeFamilies(local, item.value) : ((local != null) ? local : item.value);
         if (merged !== local) {
           _applyingRemote = true;
           _origSet(key, merged);
@@ -224,7 +246,7 @@
       // read 云端当前值，与本地合并（账号并集）后再写回，避免本地空数据覆盖云端真实账号
       return readKey(key).then(function (item) {
         var cloud = (item && item.value != null) ? item.value : null;
-        var merged = (key === 'sw_users') ? mergeUsers(local, cloud) : local;
+        var merged = (key === 'sw_users') ? mergeUsers(local, cloud) : (key === 'sw_families') ? mergeFamilies(local, cloud) : local;
         var v = Date.now();
         return writeKey(key, merged, v).then(function (ok) {
           if (ok) { setVer(key, v); _setFp(key, _fp(merged)); }
