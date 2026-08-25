@@ -34,8 +34,8 @@
         clearTimeout(_tF);
         _tF = setTimeout(function () {
           try {
-            // 首次拉取完成前不推送，防止默认数据覆盖云端
-            if (window.top && window.top.SyncHub && window.top.SyncHub._firstPullDone) {
+            // 交给顶层 push 统一处理：未就绪会自动排队，不丢弃（修复：首次拉取未完成时家长端写入被静默丢弃）
+            if (window.top && window.top.SyncHub) {
               window.top.SyncHub.push();
             }
           } catch (e) {}
@@ -58,8 +58,7 @@
       push: function () {
         try {
           if (window.top && window.top.SyncHub) {
-            // 首次拉取完成前不推送，防止默认数据覆盖云端
-            if (!window.top.SyncHub._firstPullDone) return Promise.resolve(true);
+            // 未就绪时顶层 push 会自动排队补发，这里不再丢弃
             return window.top.SyncHub.push();
           }
         } catch (e) {}
@@ -114,9 +113,10 @@
     }
   }
 
-  // 账号级合并：云端账号 ∪ 本地账号；同名账号以本地为准（本地刚操作过，避免云端旧数据回灌）
-  // 核心修复：之前 push 用「本地整体覆盖云端」、版本号用 Date.now 比较，导致后启动的空设备会把云端已有账号整体抹掉 → 反复「没注册」。
-  // 改为账号并集后，无论哪端先写，最终都收敛为账号并集，互不删除，跨设备不再丢失。
+  // 账号级合并：云端账号 ∪ 本地账号（字段级递归合并，不丢数据）
+  // 核心修复①：原实现「同名账号整体本地优先」→ 学生端本地账号只要存在（哪怕 data 为空），
+  //   pull 时云端新数据被丢弃、push 时把云端成绩/进度整体覆盖清空 → 「家长端设置的内容学生端看不到」。
+  // 现改为字段级合并：对象递归、数组按 id 并集（成绩/作业/错题等双方都会追加）、标量非空优先（冲突本地优先）。
   function mergeUsers(localStr, cloudStr) {
     try {
       var L = JSON.parse(localStr || '{}');
@@ -127,12 +127,57 @@
       for (k in L) keys[k] = 1;
       for (k in C) keys[k] = 1;
       for (k in keys) {
-        if (L[k] && !C[k]) M[k] = L[k];
-        else if (C[k] && !L[k]) M[k] = C[k];
-        else M[k] = L[k]; // 都有：本地优先
+        if (L[k] == null) M[k] = C[k];
+        else if (C[k] == null) M[k] = L[k];
+        else M[k] = mergeRec(L[k], C[k]);
       }
       return JSON.stringify(M);
     } catch (e) { return localStr || cloudStr || '{}'; }
+  }
+
+  // 递归字段级合并：对象递归；数组按 id（无 id 按 JSON 串）并集去重；标量非空优先、都非空本地优先
+  function _isEmpty(v) { return v === undefined || v === null || v === ''; }
+  function _arrKey(x) {
+    if (x == null) return '_n';
+    if (x.id != null && x.id !== '') return 'id:' + x.id;
+    if (typeof x === 'string') return 's:' + x;
+    return 'j:' + JSON.stringify(x);
+  }
+  function mergeRec(l, c) {
+    if (l == null) return c;
+    if (c == null) return l;
+    var aL = Array.isArray(l), aC = Array.isArray(c);
+    var tL = typeof l, tC = typeof c;
+    // 都是普通对象 → 递归
+    if (!aL && !aC && tL === 'object' && tC === 'object') {
+      var out = {};
+      var ks = {};
+      var kk;
+      for (kk in l) ks[kk] = 1;
+      for (kk in c) ks[kk] = 1;
+      for (kk in ks) {
+        if (l[kk] === undefined) out[kk] = c[kk];
+        else if (c[kk] === undefined) out[kk] = l[kk];
+        else out[kk] = mergeRec(l[kk], c[kk]);
+      }
+      return out;
+    }
+    // 任一是数组 → 按 key 并集
+    if (aL || aC) {
+      var a1 = aL ? l : [];
+      var a2 = aC ? c : [];
+      var map = {};
+      var i, x, k2;
+      for (i = 0; i < a1.length; i++) { x = a1[i]; map[_arrKey(x)] = x; }
+      for (i = 0; i < a2.length; i++) { x = a2[i]; k2 = _arrKey(x); if (map[k2] !== undefined) map[k2] = mergeRec(map[k2], x); else map[k2] = x; }
+      var out = [];
+      for (var mk in map) out.push(map[mk]);
+      return out;
+    }
+    // 标量
+    if (_isEmpty(l)) return c;
+    if (_isEmpty(c)) return l;
+    return l;
   }
 
   // 家庭级合并：本地家庭 ∪ 云端家庭（家庭以名称为键，双方取并集，同名以本地为准）
@@ -210,7 +255,15 @@
     return Promise.all(tasks).then(function () {
       _pulling = false;
       // 仅在网络正常时才标记"拉取完成"，防止网络故障时默认数据覆盖云端
-      if (fetchOk) _firstPullDone = true;
+      if (fetchOk) {
+        _firstPullDone = true;
+        // 拉取就绪后，把排队中的推送立即补发（修复：首次拉取未完成期间家长端的写入被丢弃）
+        if (_pendingPush) {
+          _pendingPush = false;
+          clearTimeout(_timer);
+          _timer = setTimeout(function () { push(); }, 300);
+        }
+      }
       // 静默模式：不 reload，让调用方自行 re-render 当前页
       // 防抖：1.5 秒内只允许 reload 一次，防止多标签页/循环触发无限刷新
       if (changed && !options.silent && LS.getItem('sw_session')) {
@@ -226,6 +279,8 @@
 
   // 推送：本地数据写入云端（仅内容变化时才写，防止无限循环推高版本号）
   // 指纹持久化到 localStorage：页面 reload 后依然能识别"内容没变"，从根源上杜绝多标签页/多设备互相推高版本导致的无限刷新
+  var _pendingPush = false; // 首次拉取完成前收到的推送请求先排队，就绪后补发
+  var _pushFails = 0;       // 连续失败次数（最多重试 3 次）
   function _fp(val) {
     var s = String(val == null ? '' : val);
     var h = 5381;
@@ -237,6 +292,8 @@
   function _setFp(k, fp) { try { _origSet(_fpKey(k), fp); } catch (e) {} }
   // 推送：本地数据合并云端后写回（账号不丢失，跨设备收敛）。空设备推送不会删除云端已有账号。
   function push() {
+    // 首次拉取未就绪 → 排队等待（修复：家长端在同步就绪前的写入不再被静默丢弃）
+    if (!_firstPullDone) { _pendingPush = true; return Promise.resolve(true); }
     var tasks = SYNC_KEYS.map(function (key) {
       var local = LS.getItem(key);
       if (local == null) return Promise.resolve(true); // 本地无此 key，跳过
@@ -255,12 +312,20 @@
       });
     });
     return Promise.all(tasks).then(function (rs) {
-      return rs.indexOf(false) === -1;
+      var ok = rs.indexOf(false) === -1;
+      if (ok) { _pushFails = 0; return true; }
+      // 推送失败（网络等）→ 3 秒后自动重试，最多 3 次，避免静默丢失
+      _pushFails++;
+      if (_pushFails <= 3) {
+        clearTimeout(_timer);
+        _timer = setTimeout(function () { push(); }, 3000);
+      }
+      return false;
     });
   }
 
   function schedulePush() {
-    if (!_firstPullDone) return; // 首次拉取完成前不推送，防止默认数据覆盖云端
+    // 首次拉取未就绪时 push() 会自动排队，这里不再丢弃
     clearTimeout(_timer);
     _timer = setTimeout(function () { push(); }, 600);
   }
