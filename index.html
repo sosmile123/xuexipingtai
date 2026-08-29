@@ -2,10 +2,19 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>学生工作台</title>
+<meta name="theme-color" content="#5b8def">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="学习平台">
   <script src="sync.js?v=20260825b"></script>
   <script src="email.min.js"></script>
+<script>/* PWA：注册 Service Worker（网络优先，离线兜底） */
+if('serviceWorker' in navigator){ window.addEventListener('load', function(){ navigator.serviceWorker.register('sw.js?v=20260829').catch(function(){}); }); }
+</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
