@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>学习工作台</title>
+<script src="auth.js?v=20260912"></script>
 <script src="chart.umd.min.js"></script>
   <script src="textbook.js"></script>
   <script src="sync.js"></script>
@@ -601,16 +602,27 @@ textarea.err-input{resize:vertical;line-height:1.6}
    ========================================================== */
 const SESSION_KEY = 'sw_session';
 function getSession() {
-  try { return JSON.parse(localStorage.getItem(SESSION_KEY)); }
-  catch(e) { return null; }
+  // 会话经安全模块校验（过期时间 + 完整性签名）
+  return (window.SWAuth ? SWAuth.getSession() : null);
 }
 function logoutStudent() {
-  localStorage.removeItem(SESSION_KEY);
-  window.location.href = 'login.html';
+  try { SWAuth.clearSession(); } catch(e) { localStorage.removeItem(SESSION_KEY); }
+  window.location.href = 'index.html';
 }
 const session = getSession();
-if (!session || session.role !== 'student' || (Date.now() - session.loginAt > 86400000*7)) {
+// 角色以「用户库」为准，防止改 session 伪造身份；student / admin 可进入学习端
+var _authU = (window.SWAuth ? SWAuth.authUser() : null);
+if (!_authU || (_authU.role !== 'student' && _authU.role !== 'admin')) {
   logoutStudent();
+} else if (session) {
+  // 补全会话显示字段，避免旧代码访问 undefined（不影响签名校验）
+  session.displayName = _authU.displayName;
+  session.role = _authU.role;
+}
+// 图片地址白名单：仅允许 data:image/ 与 https?://，杜绝 javascript: 等注入
+function safeImgSrc(src){
+  try { src = String(src||''); if(/^data:image\//i.test(src)) return src; if(/^https?:\/\//i.test(src)) return src; } catch(e){}
+  return '';
 }
 
 /* ==========================================================
@@ -26405,7 +26417,8 @@ function engLibUpdateCounts(){
   });
   // 如果当前已经渲染过列表，列表也要重新算（防止后台 srs 变化没刷新）
   const wrap = document.getElementById('engLibList');
-  if(wrap && wrap.getAttribute('data-rendered') === '1') renderEngLibrary();
+  // 防御：正在渲染中(_engLibRendering)时不要回调 renderEngLibrary，避免递归；由外层渲染负责重绘
+  if(wrap && wrap.getAttribute('data-rendered') === '1' && !_engLibRendering) renderEngLibrary();
 }
 function engLibTab(name, btn){
   engLibTabName = name;
@@ -27639,7 +27652,7 @@ function renderReading(el){
     var qs=state.quoteList||[];
     for(var i=0;i<Math.max(d.quotes.length,qs.length);i++){
       var qq=(qs[i]||d.quotes[i]||'');
-      h+='<div style="padding:8px 12px;background:var(--yel2);border-radius:8px;margin-bottom:6px;font-size:13px;color:var(--text)">💬 '+qq+'</div>';
+      h+='<div style="padding:8px 12px;background:var(--yel2);border-radius:8px;margin-bottom:6px;font-size:13px;color:var(--text)">💬 '+SWAuth.esc(qq)+'</div>';
     }
     h+='</div>';
   }
@@ -27648,7 +27661,7 @@ function renderReading(el){
     var wl=state.wishlist||[];
     for(var j=0;j<d.wishlist.length;j++){
       var wi=d.wishlist[j],got=wl.indexOf(wi.id)>=0;
-      h+='<div class="wish-item'+(got?' got':'')+'" onclick="_toggleWish('+wi.id+')"><span>'+wi.icon+'</span><span>'+wi.title+'</span><span style="font-size:11px;color:var(--text3);margin-left:auto">'+wi.desc+'</span></div>';
+      h+='<div class="wish-item'+(got?' got':'')+'" onclick="_toggleWish('+wi.id+')"><span>'+SWAuth.esc(wi.icon)+'</span><span>'+SWAuth.esc(wi.title)+'</span><span style="font-size:11px;color:var(--text3);margin-left:auto">'+SWAuth.esc(wi.desc)+'</span></div>';
     }
     h+='</div>';
   }
@@ -28362,8 +28375,8 @@ function renderHomework(el){
       var statusText = s.status==="pending" ? "待批改" : "已评 "+s.rating+" 星";
       h+='<div class="error-card" style="border-left-color:var(--pri)">';
       h+='<div class="error-subject">'+statusIcon+' '+s.subject+' · '+s.dateLabel+'</div>';
-      h+='<div style="font-size:13px;color:var(--text);line-height:1.6">'+s.content+'</div>';
-      if(s.image) h+='<div style="margin-top:6px"><img src="'+s.image+'" style="max-width:100%;border-radius:8px;max-height:200px;object-fit:cover"></div>';
+      h+='<div style="font-size:13px;color:var(--text);line-height:1.6">'+SWAuth.esc(s.content).replace(/\n/g,'<br>')+'</div>';
+      if(s.image) h+='<div style="margin-top:6px"><img src="'+safeImgSrc(s.image)+'" style="max-width:100%;border-radius:8px;max-height:200px;object-fit:cover"></div>';
       h+='<div style="font-size:12px;color:var(--text2);margin-top:6px">'+statusText+(s.pointsEarned?" · +"+s.pointsEarned+" 积分":"")+'</div>';
       h+='</div>';
     }
@@ -28535,14 +28548,14 @@ function renderAccount(el){
   h+='<div class="section"><div class="section-title">👤 当前账户</div>';
   h+='<div style="display:flex;align-items:center;gap:14px;padding:14px;background:var(--bg2);border-radius:12px">';
   h+='<div style="width:54px;height:54px;border-radius:50%;background:linear-gradient(135deg,#ffd2a8,#ff9f6e);display:flex;align-items:center;justify-content:center;font-size:30px">'+av+'</div>';
-  h+='<div><div style="font-size:16px;font-weight:700;color:var(--text)" id="accName">'+session.displayName+'</div>';
-  h+='<div style="font-size:12px;color:var(--text3)">用户名：'+session.username+' · '+(session.role==='parent'?'家长':'学生')+'</div></div>';
+  h+='<div><div style="font-size:16px;font-weight:700;color:var(--text)" id="accName">'+SWAuth.esc(session.displayName)+'</div>';
+  h+='<div style="font-size:12px;color:var(--text3)">用户名：'+SWAuth.esc(session.username)+' · '+(session.role==='parent'?'家长':'学生')+'</div></div>';
   h+='</div></div>';
 
   // Nickname
   h+='<div class="section"><div class="section-title">✏️ 修改昵称</div>';
   h+='<div style="display:flex;gap:10px">';
-  h+='<input id="accNick" class="practice-input" style="flex:1" value="'+session.displayName+'" placeholder="输入新昵称">';
+  h+='<input id="accNick" class="practice-input" style="flex:1" value="'+SWAuth.esc(session.displayName)+'" placeholder="输入新昵称">';
   h+='<button class="practice-check" onclick="_saveAccountNickname()">保存</button>';
   h+='</div></div>';
 
@@ -28589,18 +28602,23 @@ function _selectAccountAvatar(a){
   showToast('头像已更新 ✓');
 }
 
-function _changeAccountPassword(){
+async function _changeAccountPassword(){
   var oldP=document.getElementById('accOldPwd').value;
   var newP=document.getElementById('accNewPwd').value;
   var newP2=document.getElementById('accNewPwd2').value;
   if(!oldP||!newP||!newP2){ showToast('请填写所有密码字段','error'); return; }
+  var au = window.SWAuth ? SWAuth.authUser() : null;
+  if(!au){ showToast('会话已过期，请重新登录','error'); return; }
   var db=_lcGetUserDB();
-  var u=db[session.username];
+  var u=db[au.username];
   if(!u){ showToast('账户数据异常','error'); return; }
-  if(u.password!==simpleHashLc(oldP)){ showToast('当前密码错误','error'); return; }
-  if(newP.length<4){ showToast('新密码至少4位','error'); return; }
+  // PBKDF2 校验（兼容旧哈希）
+  var okPwd = window.SWAuth ? await SWAuth.verify(oldP, u.password) : (u.password===simpleHashLc(oldP));
+  if(!okPwd){ showToast('当前密码错误','error'); return; }
+  var bad = window.SWAuth ? SWAuth.checkStrength(newP) : (newP.length<6?'密码至少 6 位':null);
+  if(bad){ showToast(bad,'error'); return; }
   if(newP!==newP2){ showToast('两次新密码不一致','error'); return; }
-  u.password=simpleHashLc(newP);
+  u.password = window.SWAuth ? await SWAuth.hash(newP) : simpleHashLc(newP);
   _lcSaveUserDB(db);
   document.getElementById('accOldPwd').value='';
   document.getElementById('accNewPwd').value='';
@@ -29648,7 +29666,7 @@ function renderParentReview(el){
       h += '<span class="tag-pill chip-orange" style="font-size:12px">📖 '+s.subject+'</span>';
       h += '<span style="font-size:11px;color:var(--text3)">'+s.dateLabel+' | '+s.gradeKey+'</span>';
       h += '</div>';
-      h += '<div style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px;background:var(--bg2);padding:12px;border-radius:8px">'+s.content+'</div>';
+      h += '<div style="font-size:14px;color:var(--text);line-height:1.7;margin-bottom:10px;background:var(--bg2);padding:12px;border-radius:8px">'+SWAuth.esc(s.content).replace(/\n/g,'<br>')+'</div>';
       h += '<div style="font-size:13px;color:var(--text2);margin-bottom:8px">⭐ 请评分：</div>';
       h += '<div class="star-rating" data-hwid="'+s.id+'">';
       for(var k=1;k<=5;k++){
@@ -29675,7 +29693,7 @@ function renderParentReview(el){
       h += '<span style="font-size:12px">'+stars+'</span>';
       h += '<span style="font-size:11px;color:var(--text3)">+'+r.pointsEarned+' 积分</span>';
       h += '</div>';
-      h += '<div style="font-size:13px;color:var(--text2);margin-top:6px">'+r.content.substring(0,80)+'...</div>';
+      h += '<div style="font-size:13px;color:var(--text2);margin-top:6px">'+SWAuth.esc(r.content.substring(0,80))+'...</div>';
       h += '<div style="font-size:10px;color:var(--text3);margin-top:4px">🔒 已确认 · '+r.ratedAt+'</div>';
       h += '</div>';
     }

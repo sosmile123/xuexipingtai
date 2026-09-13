@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>学生工作台 - 家长 / 管理端</title>
+  <script src="auth.js?v=20260912"></script>
   <script src="chart.umd.min.js"></script>
   <script src="textbook.js"></script>
   <script src="sync.js"></script>
@@ -283,21 +284,24 @@ body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;backgr
 <script>
 // ===== 会话与用户库（与登录端共用 localStorage）=====
 const SESSION_KEY='sw_session';
-function getSession(){ try{ return JSON.parse(localStorage.getItem(SESSION_KEY)); }catch(e){ return null; } }
-function _accSaveSession(s){ localStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
-function clearSession(){ localStorage.removeItem(SESSION_KEY); }
-function _accGetUsers(){ try{ return JSON.parse(localStorage.getItem('sw_users'))||{}; }catch(e){ return {}; } }
-function _accSaveUsers(db){ localStorage.setItem('sw_users', JSON.stringify(db)); }
+function getSession(){ return SWAuth.getSession(); }
+function _accSaveSession(s){ return SWAuth.setSession(s); }
+function clearSession(){ SWAuth.clearSession(); }
+function _accGetUsers(){ return SWAuth.loadUsers(); }
+function _accSaveUsers(db){ SWAuth.saveUsers(db); }
 function _accLoadUsers(){ return _accGetUsers(); }
 function _accHash(str){ var h=0; str=String(str); for(var i=0;i<str.length;i++){ h=(h<<5)-h+str.charCodeAt(i); h|=0; } return 'h'+h; }
-function simpleHash(str){ var hash=0; str=String(str); for(var i=0;i<str.length;i++){ var c=str.charCodeAt(i); hash=((hash<<5)-hash)+c; hash|=0; } return 'h_'+Math.abs(hash).toString(36); }
+// 旧版弱哈希仅保留兼容名；新密码一律用 SWAuth.hash（PBKDF2 + 随机盐）
+function simpleHash(str){ return SWAuth.legacyHash(str); }
+function esc(s){ return SWAuth.esc(s); }
 
 var session=getSession();
 var isAdminMode=false;
-function isAdminSession(){ return session && (session.role==='admin'||isAdminMode); }
+// 权限判定以「用户库」中的真实角色为准（会话里的 role 不再被信任，防止改 localStorage 提权）
+function isAdminSession(){ var a=SWAuth.authUser(); return !!(a && (a.role==='admin' || isAdminMode)); }
 
-// 无会话则回到统一入口
-if(!session || !session.role){ window.top.location.href='index.html'; }
+// 无有效会话则回到统一入口
+if(!session || !SWAuth.authUser()){ window.top.location.href='index.html'; }
 
 function doLogout(){ clearSession(); window.top.location.href='index.html'; }
 
@@ -349,17 +353,17 @@ function _renderAdminUsers(el){
     var famName='未分配';
     for(var fk in families){ if(families[fk].members && families[fk].members.indexOf(uname)>=0){ famName=fk; break; } }
     var famOpts='<option value="">— 未分配 —</option>';
-    for(var fk2 in families){ famOpts+='<option value="'+fk2+'"'+(famName===fk2?' selected':'')+'>'+fk2+'</option>'; }
+    for(var fk2 in families){ famOpts+='<option value="'+_ppEsc(fk2)+'"'+(famName===fk2?' selected':'')+'>'+_ppEsc(fk2)+'</option>'; }
     tbody+='<tr>';
-    tbody+='<td><strong>'+uname+'</strong>'+(isAdminUser?' <span style="font-size:11px;color:var(--org)">👑管理员</span>':'')+'</td>';
-    tbody+='<td>'+(usr.displayName||'-')+'</td>';
+    tbody+='<td><strong>'+_ppEsc(uname)+'</strong>'+(isAdminUser?' <span style="font-size:11px;color:var(--org)">👑管理员</span>':'')+'</td>';
+    tbody+='<td>'+_ppEsc(usr.displayName||'-')+'</td>';
     if(isAdminUser){
       tbody+='<td><span style="font-size:12px;color:var(--text2)">👑 管理员</span></td>';
     }else{
-      tbody+='<td><select onchange="_adminSetRole(\''+uname+'\', this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer"><option value="student"'+(usr.role==='student'?' selected':'')+'>🎒 学生</option><option value="parent"'+(usr.role==='parent'?' selected':'')+'>👨‍👩‍👧 家长</option></select></td>';
+      tbody+='<td><select onchange="_adminSetRole(\''+SWAuth.escJs(uname)+'\', this.value)" style="padding:4px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;cursor:pointer"><option value="student"'+(usr.role==='student'?' selected':'')+'>🎒 学生</option><option value="parent"'+(usr.role==='parent'?' selected':'')+'>👨‍👩‍👧 家长</option></select></td>';
     }
-    tbody+='<td>'+((usr.stage||'')+(usr.grade?((usr.stage?' · ':'')+usr.grade):(usr.stage?'':'—')))+'</td>';
-    tbody+='<td>'+famName+'</td>';
+    tbody+='<td>'+_ppEsc((usr.stage||'')+(usr.grade?((usr.stage?' · ':'')+usr.grade):(usr.stage?'':'—')))+'</td>';
+    tbody+='<td>'+_ppEsc(famName)+'</td>';
     tbody+='<td class="action-btns">';
     if(isAdminUser){
       tbody+='<button class="btn-link" onclick="_adminEditUser(\''+uname+'\')" title="编辑显示名">✏️ 编辑</button>';
@@ -376,18 +380,23 @@ function _renderAdminUsers(el){
   }
   document.getElementById('adminUserBody').innerHTML=tbody||'<tr><td colspan="6" style="text-align:center;color:var(--text3)">暂无用户</td></tr>';
 }
-function _adminAddUser(){
+async function _adminAddUser(){
   var username=document.getElementById('admAddUser').value.trim();
   var role=document.getElementById('admAddRole').value;
   var displayName=document.getElementById('admAddName').value.trim();
-  var pwd=document.getElementById('admAddPwd').value||'1234';
+  var pwd=document.getElementById('admAddPwd').value||'';
   if(!username||!displayName){ alert('请填写用户名和显示名称'); return; }
+  if(!/^[一-龥a-zA-Z0-9_]{2,20}$/.test(username)){ alert('用户名需 2-20 位（中文/英文/数字/下划线）'); return; }
+  // 不再默认 1234：初始密码必须达到强度要求
+  var bad=SWAuth.checkStrength(pwd);
+  if(bad){ alert('初始密码不符合要求：'+bad); return; }
   var users=_accGetUsers();
   if(users[username]){ alert('用户名已存在'); return; }
-  var newUser={password:simpleHash(pwd),role:role,displayName:displayName};
+  var newUser={password:await SWAuth.hash(pwd),role:role,displayName:displayName};
   if(role==='student'){ newUser.stage='小学'; newUser.grade='二年级'; newUser.semester='上'; }
   users[username]=newUser; _accSaveUsers(users);
   document.getElementById('admAddUser').value=''; document.getElementById('admAddName').value='';
+  document.getElementById('admAddPwd').value='';
   _renderAdminUsers(document.getElementById('page-adminUsers'));
   alert('✅ 用户 '+username+' 已创建');
 }
@@ -411,24 +420,24 @@ function _adminSetRole(username,role){
   _accSaveUsers(users); alert('✅ '+username+' 已设为'+(role==='student'?'学生':'家长'));
   _renderAdminUsers(document.getElementById('page-adminUsers'));
 }
-function _adminChangePwd(username){
+async function _adminChangePwd(username){
   if(!isAdminSession()){ alert('仅管理员可操作'); return; }
   var users=_accGetUsers(); if(!users[username]) return;
-  var newPwd=prompt('为用户「'+username+'」设置新密码（至少4位）：'); if(!newPwd) return;
-  if(newPwd.length<4){ alert('密码至少4位'); return; }
-  users[username].password=simpleHash(newPwd); _accSaveUsers(users); alert('✅ '+username+' 的密码已修改');
+  var newPwd=prompt('为用户「'+username+'」设置新密码：'); if(!newPwd) return;
+  var bad=SWAuth.checkStrength(newPwd);
+  if(bad){ alert('密码不符合要求：'+bad); return; }
+  users[username].password=await SWAuth.hash(newPwd); _accSaveUsers(users);
+  // 立即清除该用户的登录失败计数（避免管理员重设后被锁定影响）
+  SWAuth.clearFail(username);
+  alert('✅ '+username+' 的密码已重置为新的强密码');
 }
 
-/* 管理员：为学生/家长生成重置密码验证码（30分钟有效） */
+/* 说明：旧版「生成重置验证码」功能已移除。
+ * 原因：验证码写在本机 localStorage（且在扫码/其他设备上可被改写），
+ * 攻击者可自行写入验证码后重置任意账号 —— 属于"任意账号接管"漏洞。
+ * 现在管理员直接用上方「改密」按钮为用户设置新密码即可。 */
 function _adminGenResetCode(username){
-  if(!isAdminSession()){ alert('仅管理员可操作'); return; }
-  var users=_accGetUsers(); if(!users[username]) return;
-  if(users[username].role==='admin'){ alert('管理员账号的验证码会发送到其邮箱，无需在此生成'); return; }
-  var code=String(Math.floor(100000+Math.random()*900000)); // 6位
-  var expire=Date.now()+30*60*1000;
-  localStorage.setItem('sw_reset_'+username, JSON.stringify({code:code,expire:expire}));
-  var u=users[username];
-  alert('✅ 已为「'+(u.displayName||username)+'」生成重置验证码：\n\n🔐 '+code+'\n\n⏱ 30分钟内有效\n请把验证码告诉该用户，他在登录页点「忘记密码」→ 输入用户名和此验证码即可重置密码。');
+  alert('🔐 该功能已停用。\n\n出于安全考虑，密码重置验证码机制已整体移除。\n请直接点击「改密」为「'+(username||'')+'」设置新密码。');
 }
 
 // ===== 管理员：编辑用户显示名 / 学段 / 年级 / 学期 =====
@@ -514,7 +523,7 @@ function _renderFamilyMgmt(el){
   var unames=Object.keys(users).filter(function(u){ return users[u].role!=='admin'; });
   for(var i=0;i<unames.length;i++){
     var u=users[unames[i]]; var icon=u.role==='student'?'🎒':'👨‍👩‍👧';
-    pickerHtml+='<label style="cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--surface2);border-radius:20px;font-size:12px"><input type="checkbox" value="'+unames[i]+'" class="fam-member-cb"> '+icon+' '+(u.displayName||unames[i])+' ('+unames[i]+')</label>';
+    pickerHtml+='<label style="cursor:pointer;display:flex;align-items:center;gap:4px;padding:4px 8px;background:var(--surface2);border-radius:20px;font-size:12px"><input type="checkbox" value="'+_ppEsc(unames[i])+'" class="fam-member-cb"> '+icon+' '+_ppEsc(u.displayName||unames[i])+' ('+_ppEsc(unames[i])+')</label>';
   }
   document.getElementById('famMemberPicker').innerHTML=pickerHtml;
   var html=''; var fkeys=Object.keys(families);
@@ -522,8 +531,8 @@ function _renderFamilyMgmt(el){
   else{
     for(var fi=0;fi<fkeys.length;fi++){
       var fid=fkeys[fi]; var fam=families[fid];
-      html+='<div class="family-card"><div class="family-header"><span class="family-name">🏠 '+fid+'</span><button class="btn btn-danger btn-sm" onclick="_deleteFamily(\''+fid+'\')">删除家庭</button></div><div class="family-members">';
-      if(fam.members&&fam.members.length>0){ for(var mi=0;mi<fam.members.length;mi++){ var mun=fam.members[mi]; var mu=users[mun]||{}; var micon=mu.role==='student'?'🎒':(mu.role==='parent'?'👨‍👩‍👧':'❓'); var mcls=mu.role==='student'?'student':'parent'; html+='<span class="member-tag '+mcls+'">'+micon+' '+(mu.displayName||mun)+'</span>'; } }
+      html+='<div class="family-card"><div class="family-header"><span class="family-name">🏠 '+_ppEsc(fid)+'</span><button class="btn btn-danger btn-sm" onclick="_deleteFamily(\''+SWAuth.escJs(fid)+'\')">删除家庭</button></div><div class="family-members">';
+      if(fam.members&&fam.members.length>0){ for(var mi=0;mi<fam.members.length;mi++){ var mun=fam.members[mi]; var mu=users[mun]||{}; var micon=mu.role==='student'?'🎒':(mu.role==='parent'?'👨‍👩‍👧':'❓'); var mcls=mu.role==='student'?'student':'parent'; html+='<span class="member-tag '+mcls+'">'+micon+' '+_ppEsc(mu.displayName||mun)+'</span>'; } }
       html+='</div></div>';
     }
   }
@@ -580,7 +589,7 @@ function renderParentStudentList(){
   for(var i=0;i<members.length;i++){
     var mun=members[i]; var mu=users[mun]||{}; if(mu.role!=='student') continue; hasStudent=true;
     var data=mu.data||{}; var pts=(data.user&&data.user.points)||0;
-    html+='<div class="student-card" onclick="parentSelectStudent(\''+mun+'\')"><div style="font-weight:700">'+(mu.displayName||mun)+'</div><div style="font-size:12px;color:var(--text2)">'+mun+' · '+(mu.grade||(mu.stage||'')+(mu.grade||''))+' · ⭐ '+pts+' 分</div></div>';
+    html+='<div class="student-card" onclick="parentSelectStudent(\''+SWAuth.escJs(mun)+'\')"><div style="font-weight:700">'+_ppEsc(mu.displayName||mun)+'</div><div style="font-size:12px;color:var(--text2)">'+_ppEsc(mun)+' · '+_ppEsc(mu.grade||(mu.stage||'')+(mu.grade||''))+' · ⭐ '+_ppEsc(pts)+' 分</div></div>';
   }
   document.getElementById('parentStudentList').innerHTML=html||'<div class="empty-state">还没有学生加入此家庭<br>让学生注册后，管理员在「用户管理」中将其分配到本家庭</div>';
   document.getElementById('parentStudentDetail').style.display='none';
@@ -594,14 +603,14 @@ function renderParentStudentDetail(){
   if(!_curStu) return;
   var users=_accGetUsers(); var mu=users[_curStu]||{}; var data=mu.data||{};
   document.getElementById('parentStuName').textContent=(mu.displayName||_curStu)+' 的学习情况';
-  var html='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">'+_curStu+' · '+(mu.grade||(mu.stage||'')+(mu.grade||''))+' · ⭐ '+((data.user&&data.user.points)||0)+' 分</div>';
+  var html='<div style="font-size:13px;color:var(--text2);margin-bottom:10px">'+_ppEsc(_curStu)+' · '+_ppEsc(mu.grade||(mu.stage||'')+(mu.grade||''))+' · ⭐ '+_ppEsc((data.user&&data.user.points)||0)+' 分</div>';
   var hw=(data.homework&&data.homework.length)||0;
   var parentHw=(mu.parentHomework&&mu.parentHomework.length)||0;
   html+='<div class="stat-card accent-primary" style="display:inline-block;margin-right:10px"><div class="value" style="font-size:20px">'+(data.wrongBook?data.wrongBook.length:0)+'</div><div class="label">错题</div></div>';
   html+='<div class="stat-card accent-orange" style="display:inline-block"><div class="value" style="font-size:20px">'+(hw+parentHw)+'</div><div class="label">作业</div></div>';
   if(mu.parentHomework&&mu.parentHomework.length){
     html+='<h4 style="margin:14px 0 8px">📝 我布置的作业</h4>';
-    for(var i=0;i<mu.parentHomework.length;i++){ var h=mu.parentHomework[i]; html+='<div style="font-size:13px;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:6px">'+h.subject+'：'+h.content+' · ⭐'+h.points+'分 · '+(h.done?'✅已完成':'⏳待完成')+'</div>'; }
+    for(var i=0;i<mu.parentHomework.length;i++){ var h=mu.parentHomework[i]; html+='<div style="font-size:13px;padding:8px;background:var(--surface2);border-radius:8px;margin-bottom:6px">'+_ppEsc(h.subject)+'：'+_ppEsc(h.content)+' · ⭐'+_ppEsc(h.points)+'分 · '+(h.done?'✅已完成':'⏳待完成')+'</div>'; }
   }
   document.getElementById('parentStuBody').innerHTML=html;
   document.getElementById('parentStudentDetail').style.display='block';
@@ -625,17 +634,19 @@ function parentApproveRedemption(id){ /* 本地模式预留 */ }
 function parentRejectRedemption(id){ /* 本地模式预留 */ }
 
 // ===== 修改密码（当前账号）=====
-function changeAccountPassword(){
+async function changeAccountPassword(){
   var oldP=document.getElementById('accOldPwd').value;
   var newP=document.getElementById('accNewPwd').value;
   var newP2=document.getElementById('accNewPwd2').value;
   if(!oldP||!newP||!newP2){ alert('请填写所有密码字段'); return; }
-  var db=_accGetUsers(); var u=db[session.username];
+  var au=SWAuth.authUser(); if(!au){ alert('会话已过期，请重新登录'); window.top.location.href='index.html'; return; }
+  var db=_accGetUsers(); var u=db[au.username];
   if(!u){ alert('账户数据异常'); return; }
-  if(u.password!==simpleHash(oldP)){ alert('当前密码错误'); return; }
-  if(newP.length<4){ alert('新密码至少4位'); return; }
+  if(!(await SWAuth.verify(oldP, u.password))){ alert('当前密码错误'); return; }
+  var bad=SWAuth.checkStrength(newP);
+  if(bad){ alert(bad); return; }
   if(newP!==newP2){ alert('两次新密码不一致'); return; }
-  u.password=simpleHash(newP); _accSaveUsers(db);
+  u.password=await SWAuth.hash(newP); _accSaveUsers(db);
   document.getElementById('accOldPwd').value=''; document.getElementById('accNewPwd').value=''; document.getElementById('accNewPwd2').value='';
   alert('密码修改成功 ✓');
 }
@@ -659,7 +670,7 @@ function _parentStudentPicker(){
   var stus=_parentGetStudents();
   if(stus.length===0) return '<div class="empty-state">没有关联的学生，请先在「家庭管理」中加入学生</div>';
   var html='<div class="form-row" style="margin-bottom:16px"><label style="font-size:13px;color:var(--text2);align-self:center">选择学生：</label><select id="pStuSel" class="form-control" style="max-width:240px" onchange="_parentPickStudent(this.value)">';
-  for(var i=0;i<stus.length;i++){ var u=_accGetUsers()[stus[i]]; html+='<option value="'+stus[i]+'"'+(_curStu===stus[i]?' selected':'')+'>'+(u.displayName||stus[i])+'（'+stus[i]+'）</option>'; }
+  for(var i=0;i<stus.length;i++){ var u=_accGetUsers()[stus[i]]; html+='<option value="'+_ppEsc(stus[i])+'"'+(_curStu===stus[i]?' selected':'')+'>'+_ppEsc(u.displayName||stus[i])+'（'+_ppEsc(stus[i])+'）</option>'; }
   html+='</select></div>';
   return html;
 }
@@ -1036,9 +1047,11 @@ function testEmailConfig(){
 
 // ===== 初始化 =====
 document.addEventListener('DOMContentLoaded', function(){
-  if(!session) return;
-  document.getElementById('userName').textContent=session.displayName||(session.role==='admin'?'总管理员':'家长');
-  var isAdmin=session.role==='admin';
+  var au=SWAuth.authUser();
+  if(!au){ window.top.location.href='index.html'; return; }
+  document.getElementById('userName').textContent=au.displayName||(au.role==='admin'?'总管理员':'家长');
+  // 权限显示同样以用户库中的真实角色为准
+  var isAdmin=(au.role==='admin');
   document.getElementById('nav-adminUsers').style.display=isAdmin?'flex':'none';
   document.getElementById('nav-familyMgmt').style.display=isAdmin?'flex':'none';
   var ejPanel=document.getElementById('emailConfigPanel');
