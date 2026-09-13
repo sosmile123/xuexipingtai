@@ -1,23 +1,26 @@
 /*
- * 学生工作台 · 云端同步模块 v4（Supabase 免费版）
+ * 学生工作台 · 云端同步模块 v5（多后端：Supabase 主 + 可配置国内备份）
  * 把 localStorage 中的「账号(sw_users) / 家庭(sw_families) / 邀请码(sw_invite_code)」
- * 同步到 Supabase Postgres 数据库（表 wb_state），实现跨设备实时同步。
+ * 同步到云端，实现跨设备同步 + 灾备。
  *
- * 相比 v3（kvdb.io）：
- *   - 单条限制 16KB → Postgres TEXT 上限 1GB，容量无忧（免费 500MB 数据库）
- *   - API 请求无限次（免费档）
- *   - 无需同步码：所有设备打开同一网址即自动同步同一份数据
+ * v5 相对 v4 的变化：
+ *   1) 多后端抽象：BACKENDS 配置，supabase 为 authoritative（决定 pull 来源/版本号），
+ *      其余为镜像备份（仅接收 push + 可选 restoreFromBackup 灾备恢复）。
+ *   2) 灾备回退：主后端网络失败时，pull 自动尝试备份后端，应用仍可拿到同步数据。
+ *   3) 国内备份后端：填入 readUrl/writeUrl/headers 即可启用（默认关闭）。
+ *      推荐用「Cloudflare Worker+KV」或「腾讯云开发云函数」做中转，由它对接七牛云/CloudBase/任意存储，
+ *      密钥留在服务端，客户端只调一个 JSON 接口（契约见下方 http-json 适配器）。
  *
- * 数据结构（表 wb_state）：
- *   key      text  主键，如 sw_users / sw_families / sw_invite_code
- *   value    text  本地数据 JSON 字符串
- *   version  int8  修改时间戳（越大越新），用于冲突判断
+ * 数据结构（Supabase 表 wb_state / 备份后端 KV）：
+ *   key     主键，如 sw_users / sw_families / sw_invite_code
+ *   value   本地数据 JSON 字符串
+ *   version 修改时间戳（越大越新），用于冲突判断
  *
- * 注意：免费项目连续 1 周无访问会自动暂停，到 Supabase 后台点恢复即可。
+ * 注意：Supabase 免费项目连续 1 周无访问会自动暂停，到后台点恢复即可。
  */
 (function () {
-  if (window.__sw_sync_v4) return; // 防重复注入
-  window.__sw_sync_v4 = true;
+  if (window.__sw_sync_v5) return; // 防重复注入
+  window.__sw_sync_v5 = true;
 
   // iframe（admin.html / learning.html）内不重复劫持父页面 Storage.prototype，
   // 而是：① 劫持本 frame 的 localStorage 写入 → 自动通知父页面推送云端
@@ -52,20 +55,19 @@
     } catch (e) {}
     window.SyncHub = {
       isReady: function () { return !!(window.top && window.top.SyncHub); },
-      getCode: function () { return 'supabase-cloud'; },
-      enable: function () { return Promise.resolve('supabase-cloud'); },
+      getCode: function () { try { return (window.top && window.top.SyncHub && window.top.SyncHub.getCode()) || 'cloud'; } catch (e) { return 'cloud'; } },
+      enable: function () { return Promise.resolve('cloud'); },
       bind: function () { return Promise.resolve(true); },
       push: function () {
-        try {
-          if (window.top && window.top.SyncHub) {
-            // 未就绪时顶层 push 会自动排队补发，这里不再丢弃
-            return window.top.SyncHub.push();
-          }
-        } catch (e) {}
+        try { if (window.top && window.top.SyncHub) return window.top.SyncHub.push(); } catch (e) {}
         return Promise.resolve(true);
       },
       pull: function (opts) {
         try { if (window.top && window.top.SyncHub) return window.top.SyncHub.pull(opts); } catch (e) {}
+        return Promise.resolve(false);
+      },
+      restoreFromBackup: function () {
+        try { if (window.top && window.top.SyncHub) return window.top.SyncHub.restoreFromBackup(); } catch (e) {}
         return Promise.resolve(false);
       },
       getVersion: function (k) {
@@ -76,12 +78,37 @@
     return;
   }
 
-  var SUPABASE_URL = 'https://uybqrwrxoyiivndyaugf.supabase.co/rest/v1';
-  var SUPABASE_KEY = 'sb_publishable_vmtGZwElbLEL6UyeoWsB3Q_Rv4A0jVM';
-  var TABLE = 'wb_state';
+  // ====================== 多后端配置 ======================
   var SYNC_KEYS = ['sw_users', 'sw_families', 'sw_invite_code'];
-  var LS = window.localStorage;
+  var AUTH_ID = 'supabase'; // 主同步后端（决定 pull 来源与版本号）
+  var BACKENDS = {
+    supabase: {
+      id: 'supabase', type: 'supabase', authoritative: true, enabled: true,
+      url: 'https://uybqrwrxoyiivndyaugf.supabase.co/rest/v1',
+      key: 'sb_publishable_vmtGZwElbLEL6UyeoWsB3Q_Rv4A0jVM',
+      table: 'wb_state'
+    },
+    // 国内备份后端（默认关闭）。填好下方 readUrl / writeUrl / headers 后把 enabled 改为 true 即启用。
+    // 契约（http-json 适配器的期望）：
+    //   读：GET {readUrl 中 {key} 替换为真实 key} → 返回 JSON { value, version }
+    //   写：{writeMethod 默认 PUT} {writeUrl 中 {key} 替换} body=JSON { key, value, version }
+    // 推荐实现：Cloudflare Worker + KV（全球免费）或 腾讯云开发云函数（国内免费），由它再对接七牛云/CloudBase。
+    backup: {
+      id: 'backup', type: 'http-json', authoritative: false, enabled: false,
+      readUrl: '',          // 例：'https://<你的端点>/state/{key}'
+      writeUrl: '',         // 例：'https://<你的端点>/state/{key}'
+      writeMethod: 'PUT',
+      headers: {}           // 例：{ 'Authorization': 'Bearer <你的密钥>', 'Content-Type': 'application/json' }
+    }
+  };
+  function getBackend(id) { return BACKENDS[id]; }
+  function enabledBackups() {
+    var out = [];
+    for (var id in BACKENDS) { var b = BACKENDS[id]; if (b.id !== AUTH_ID && b.enabled) out.push(b); }
+    return out;
+  }
 
+  var LS = window.localStorage;
   var _origSet = LS.setItem.bind(LS);
   var _origRemove = LS.removeItem.bind(LS);
   var _timer = null;
@@ -94,29 +121,81 @@
   function getVer(k) { return parseInt(LS.getItem(verKey(k)) || '0', 10) || 0; }
   function setVer(k, v) { _origSet(verKey(k), String(v)); }
 
-  function headers() {
+  // ====================== 底层读写（按后端类型分发） ======================
+  function sbHeaders(b) {
     return {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
+      'apikey': b.key,
+      'Authorization': 'Bearer ' + b.key,
       'Content-Type': 'application/json'
     };
   }
-
-  function collectState() {
-    var s = {};
-    for (var i = 0; i < SYNC_KEYS.length; i++) s[SYNC_KEYS[i]] = LS.getItem(SYNC_KEYS[i]);
-    return s;
-  }
-  function applyState(state) {
-    for (var i = 0; i < SYNC_KEYS.length; i++) {
-      if (state[SYNC_KEYS[i]] != null) _origSet(SYNC_KEYS[i], state[SYNC_KEYS[i]]);
+  // 读取单个后端：返回 { value, version, ok } 或 { __error: true }
+  function readKey(b, key) {
+    if (b.type === 'supabase') {
+      return fetch(b.url + '/' + b.table + '?key=eq.' + encodeURIComponent(key) + '&select=value,version', { headers: sbHeaders(b) })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('read ' + r.status)); })
+        .then(function (rows) {
+          if (rows && rows.length) { rows[0].ok = true; return rows[0]; }
+          return { ok: true }; // 云端无此 key，但请求成功
+        })
+        .catch(function () { return { __error: true }; });
     }
+    if (b.type === 'http-json') {
+      if (!b.readUrl) return Promise.resolve({ __error: true });
+      var u = b.readUrl.replace('{key}', encodeURIComponent(key));
+      var h = {}; for (var k in (b.headers || {})) h[k] = b.headers[k];
+      return fetch(u, { headers: h })
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('read ' + r.status)); })
+        .then(function (j) { return { value: j && j.value, version: j && j.version, ok: true }; })
+        .catch(function () { return { __error: true }; });
+    }
+    return Promise.resolve({ __error: true });
   }
 
+  // 写入单个后端（upsert）
+  function writeKey(b, key, value, version) {
+    if (b.type === 'supabase') {
+      return fetch(b.url + '/' + b.table + '?on_conflict=key', {
+        method: 'POST',
+        headers: {
+          'apikey': b.key,
+          'Authorization': 'Bearer ' + b.key,
+          'Content-Type': 'application/json',
+          'Prefer': 'resolution=merge-duplicates,return=minimal'
+        },
+        body: JSON.stringify([{ key: key, value: String(value), version: version }])
+      }).then(function (r) { return r.ok; }).catch(function () { return false; });
+    }
+    if (b.type === 'http-json') {
+      if (!b.writeUrl) return Promise.resolve(false);
+      var u = b.writeUrl.replace('{key}', encodeURIComponent(key));
+      var h = { 'Content-Type': 'application/json' }; for (var k in (b.headers || {})) h[k] = b.headers[k];
+      return fetch(u, {
+        method: b.writeMethod || 'PUT',
+        headers: h,
+        body: JSON.stringify({ key: key, value: String(value), version: version })
+      }).then(function (r) { return r.ok; }).catch(function () { return false; });
+    }
+    return Promise.resolve(false);
+  }
+
+  // 从「主后端 + 已启用备份」中读取某 key：主后端优先；主后端出错时回退到备份（灾备）
+  function readFromAny(key) {
+    var order = [getBackend(AUTH_ID)].concat(enabledBackups());
+    var tries = order.map(function (b) { return readKey(b, key); });
+    return Promise.all(tries).then(function (res) {
+      for (var i = 0; i < res.length; i++) {
+        if (res[i] && !res[i].__error && res[i].value != null) return res[i]; // 优先返回有数据的结果
+      }
+      for (var j = 0; j < res.length; j++) {
+        if (res[j] && !res[j].__error) return res[j]; // 都无数据但请求成功（全新部署）
+      }
+      return { __error: true }; // 全部失败
+    });
+  }
+
+  // ====================== 合并逻辑（与 v4 完全一致，防数据丢失） ======================
   // 账号级合并：云端账号 ∪ 本地账号（字段级递归合并，不丢数据）
-  // 核心修复①：原实现「同名账号整体本地优先」→ 学生端本地账号只要存在（哪怕 data 为空），
-  //   pull 时云端新数据被丢弃、push 时把云端成绩/进度整体覆盖清空 → 「家长端设置的内容学生端看不到」。
-  // 现改为字段级合并：对象递归、数组按 id 并集（成绩/作业/错题等双方都会追加）、标量非空优先（冲突本地优先）。
   function mergeUsers(localStr, cloudStr) {
     try {
       var L = JSON.parse(localStr || '{}');
@@ -134,8 +213,6 @@
       return JSON.stringify(M);
     } catch (e) { return localStr || cloudStr || '{}'; }
   }
-
-  // 递归字段级合并：对象递归；数组按 id（无 id 按 JSON 串）并集去重；标量非空优先、都非空本地优先
   function _isEmpty(v) { return v === undefined || v === null || v === ''; }
   function _arrKey(x) {
     if (x == null) return '_n';
@@ -148,7 +225,6 @@
     if (c == null) return l;
     var aL = Array.isArray(l), aC = Array.isArray(c);
     var tL = typeof l, tC = typeof c;
-    // 都是普通对象 → 递归
     if (!aL && !aC && tL === 'object' && tC === 'object') {
       var out = {};
       var ks = {};
@@ -162,7 +238,6 @@
       }
       return out;
     }
-    // 任一是数组 → 按 key 并集
     if (aL || aC) {
       var a1 = aL ? l : [];
       var a2 = aC ? c : [];
@@ -174,16 +249,11 @@
       for (var mk in map) out.push(map[mk]);
       return out;
     }
-    // 标量
     if (_isEmpty(l)) return c;
     if (_isEmpty(c)) return l;
     return l;
   }
-
   // 家庭级合并：本地家庭 ∪ 云端家庭（家庭以名称为键，双方取并集，同名以本地为准）
-  // 核心修复：之前 sw_families 走「本地非空即忽略云端 / 推送时本地直接覆盖云端」，
-  // 导致设备 A 建了家庭，设备 B（本地空 {}）永远拉不到；且 B 一旦推送就把云端家庭整体清空 → 「家长看不到学生」。
-  // 改为并集合并后，无论哪端先写，最终都收敛为家庭并集，互不删除，跨设备可见。
   function mergeFamilies(localStr, cloudStr) {
     try {
       var L = JSON.parse(localStr || '{}');
@@ -201,34 +271,13 @@
       return JSON.stringify(M);
     } catch (e) { return localStr || cloudStr || '{}'; }
   }
-
-  // 读取单个 key：返回 { value, version, ok } 或 { __error: true }
-  // ok=true 表示请求成功（即使云端无数据），ok=false 表示网络错误
-  function readKey(key) {
-    return fetch(SUPABASE_URL + '/' + TABLE + '?key=eq.' + encodeURIComponent(key) + '&select=value,version', { headers: headers() })
-      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('read ' + r.status)); })
-      .then(function (rows) {
-        if (rows && rows.length) { rows[0].ok = true; return rows[0]; }
-        return { ok: true }; // 云端无此 key，但请求成功
-      })
-      .catch(function () { return { __error: true }; });
+  function mergeKey(key, local, cloud) {
+    if (key === 'sw_users') return mergeUsers(local, cloud);
+    if (key === 'sw_families') return mergeFamilies(local, cloud);
+    return (local != null) ? local : cloud;
   }
 
-  // upsert 写入单个 key（key 冲突时更新 value/version）
-  function writeKey(key, value, version) {
-    return fetch(SUPABASE_URL + '/' + TABLE + '?on_conflict=key', {
-      method: 'POST',
-      headers: {
-        'apikey': SUPABASE_KEY,
-        'Authorization': 'Bearer ' + SUPABASE_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'resolution=merge-duplicates,return=minimal'
-      },
-      body: JSON.stringify([{ key: key, value: String(value), version: version }])
-    }).then(function (r) { return r.ok; }).catch(function () { return false; });
-  }
-
-  // 拉取：云端数据合并到本地（账号不丢失，跨设备收敛）
+  // ====================== 拉取 ======================
   function pull(options) {
     options = options || {};
     if (_pulling) return Promise.resolve(false);
@@ -236,12 +285,12 @@
     var changed = false;
     var fetchOk = false; // 至少一次请求成功（区分"云端无数据"和"网络失败"）
     var tasks = SYNC_KEYS.map(function (key) {
-      return readKey(key).then(function (item) {
+      return readFromAny(key).then(function (item) {
         if (!item || item.__error) return;
         fetchOk = true; // 请求成功（无论云端是否有数据，全新部署也算成功）
-        if (item.value == null) return; // 云端无此 key
+        if (item.value == null) return; // 无此 key
         var local = LS.getItem(key);
-        var merged = (key === 'sw_users') ? mergeUsers(local, item.value) : (key === 'sw_families') ? mergeFamilies(local, item.value) : ((local != null) ? local : item.value);
+        var merged = mergeKey(key, local, item.value);
         if (merged !== local) {
           _applyingRemote = true;
           _origSet(key, merged);
@@ -254,18 +303,14 @@
     });
     return Promise.all(tasks).then(function () {
       _pulling = false;
-      // 仅在网络正常时才标记"拉取完成"，防止网络故障时默认数据覆盖云端
       if (fetchOk) {
         _firstPullDone = true;
-        // 拉取就绪后，把排队中的推送立即补发（修复：首次拉取未完成期间家长端的写入被丢弃）
         if (_pendingPush) {
           _pendingPush = false;
           clearTimeout(_timer);
           _timer = setTimeout(function () { push(); }, 300);
         }
       }
-      // 静默模式：不 reload，让调用方自行 re-render 当前页
-      // 防抖：1.5 秒内只允许 reload 一次，防止多标签页/循环触发无限刷新
       if (changed && !options.silent && LS.getItem('sw_session')) {
         var now = Date.now();
         if (!_lastReloadAt || now - _lastReloadAt > 1500) {
@@ -277,8 +322,7 @@
     });
   }
 
-  // 推送：本地数据写入云端（仅内容变化时才写，防止无限循环推高版本号）
-  // 指纹持久化到 localStorage：页面 reload 后依然能识别"内容没变"，从根源上杜绝多标签页/多设备互相推高版本导致的无限刷新
+  // ====================== 推送 ======================
   var _pendingPush = false; // 首次拉取完成前收到的推送请求先排队，就绪后补发
   var _pushFails = 0;       // 连续失败次数（最多重试 3 次）
   function _fp(val) {
@@ -290,23 +334,29 @@
   function _fpKey(k) { return 'sw_sync_fp_' + k; }
   function _getFp(k) { try { return LS.getItem(_fpKey(k)) || ''; } catch (e) { return ''; } }
   function _setFp(k, fp) { try { _origSet(_fpKey(k), fp); } catch (e) {} }
-  // 推送：本地数据合并云端后写回（账号不丢失，跨设备收敛）。空设备推送不会删除云端已有账号。
+
+  // 推送：先把本地合并主后端（账号不丢失），再把合并结果镜像到所有已启用备份（灾备）
   function push() {
-    // 首次拉取未就绪 → 排队等待（修复：家长端在同步就绪前的写入不再被静默丢弃）
     if (!_firstPullDone) { _pendingPush = true; return Promise.resolve(true); }
+    var authB = getBackend(AUTH_ID);
+    var backups = enabledBackups();
     var tasks = SYNC_KEYS.map(function (key) {
       var local = LS.getItem(key);
-      if (local == null) return Promise.resolve(true); // 本地无此 key，跳过
+      if (local == null) return Promise.resolve(true);
       var fp = _fp(local);
-      // 内容与上次成功推送相同 → 不写云端（版本号不再虚高，循环就此终止）
-      if (_getFp(key) === fp) return Promise.resolve(true);
-      // read 云端当前值，与本地合并（账号并集）后再写回，避免本地空数据覆盖云端真实账号
-      return readKey(key).then(function (item) {
+      if (_getFp(key) === fp) return Promise.resolve(true); // 内容未变，跳过（防版本号虚高/无限刷新）
+      return readKey(authB, key).then(function (item) {
         var cloud = (item && item.value != null) ? item.value : null;
-        var merged = (key === 'sw_users') ? mergeUsers(local, cloud) : (key === 'sw_families') ? mergeFamilies(local, cloud) : local;
+        var merged = mergeKey(key, local, cloud);
         var v = Date.now();
-        return writeKey(key, merged, v).then(function (ok) {
+        return writeKey(authB, key, merged, v).then(function (ok) {
           if (ok) { setVer(key, v); _setFp(key, _fp(merged)); }
+          // 镜像到备份后端（best-effort，失败不影响主同步）
+          if (backups.length) {
+            backups.forEach(function (b) {
+              writeKey(b, key, merged, v).then(function () {}).catch(function () {});
+            });
+          }
           return ok;
         });
       });
@@ -314,7 +364,6 @@
     return Promise.all(tasks).then(function (rs) {
       var ok = rs.indexOf(false) === -1;
       if (ok) { _pushFails = 0; return true; }
-      // 推送失败（网络等）→ 3 秒后自动重试，最多 3 次，避免静默丢失
       _pushFails++;
       if (_pushFails <= 3) {
         clearTimeout(_timer);
@@ -324,8 +373,32 @@
     });
   }
 
+  // 灾备恢复：从备份后端把数据合并回本地（当主后端不可用 / 数据丢失时使用）
+  function restoreFromBackup() {
+    var backups = enabledBackups();
+    if (!backups.length) return Promise.resolve(false);
+    var changed = false;
+    var tasks = SYNC_KEYS.map(function (key) {
+      return readKey(backups[0], key).then(function (item) {
+        if (!item || item.__error || item.value == null) return;
+        var local = LS.getItem(key);
+        var merged = mergeKey(key, local, item.value);
+        if (merged !== local) {
+          _applyingRemote = true;
+          _origSet(key, merged);
+          _applyingRemote = false;
+          changed = true;
+        }
+        _setFp(key, _fp(merged));
+      });
+    });
+    return Promise.all(tasks).then(function () {
+      if (changed) push(); // 恢复后回写主后端
+      return changed;
+    });
+  }
+
   function schedulePush() {
-    // 首次拉取未就绪时 push() 会自动排队，这里不再丢弃
     clearTimeout(_timer);
     _timer = setTimeout(function () { push(); }, 600);
   }
@@ -340,16 +413,23 @@
     if (!_applyingRemote && SYNC_KEYS.indexOf(k) >= 0) schedulePush();
   };
 
-  // ===== 对外 API（供登录页「云端同步」面板使用）=====
+  // ===== 对外 API =====
   window.SyncHub = {
-    isReady: function () { return true; },            // 始终已连接
-    getCode: function () { return 'supabase-cloud'; }, // 统一云端标识
-    enable: function () { return Promise.resolve('supabase-cloud'); },
+    isReady: function () { return true; },
+    getCode: function () {
+      var s = getBackend(AUTH_ID);
+      var c = (s && s.type === 'supabase') ? 'supabase-cloud' : 'cloud';
+      var bk = enabledBackups().length;
+      return bk ? (c + '+backup(' + bk + ')') : c;
+    },
+    enable: function () { return Promise.resolve('cloud'); },
     bind: function () { return Promise.resolve(true); },
     push: push,
     pull: pull,
+    restoreFromBackup: restoreFromBackup,
+    backends: BACKENDS,
     getVersion: function (k) { return getVer(k || SYNC_KEYS[0]); },
-    get _firstPullDone() { return _firstPullDone; }   // 供登录页检查同步状态
+    get _firstPullDone() { return _firstPullDone; }
   };
 
   // 打开页面时：拉取一次最新数据（失败则 5 秒后重试，确保最终同步）
@@ -358,7 +438,7 @@
     pull().then(function (changed) {
       if (!_firstPullDone && _initRetries < 6) {
         _initRetries++;
-        setTimeout(init, 5000); // 5 秒后重试，最多 6 次（30 秒内）
+        setTimeout(init, 5000);
       }
     });
   }
@@ -366,7 +446,6 @@
   else init();
 
   // 同浏览器多标签页：其他标签页修改 sw_* key 时（storage 事件）自动拉取最新数据。
-  // 因版本号不再虚高（内容指纹持久化），拉取只会因真实数据变化而 reload 一次，不会循环。
   try {
     window.addEventListener('storage', function (e) {
       if (e && e.key && SYNC_KEYS.indexOf(e.key) >= 0 && _firstPullDone) {
