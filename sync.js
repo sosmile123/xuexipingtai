@@ -83,9 +83,9 @@
   var AUTH_ID = 'supabase'; // 主同步后端（决定 pull 来源与版本号）
   var BACKENDS = {
     supabase: {
-      id: 'supabase', type: 'supabase', authoritative: true, enabled: true,
-      url: 'https://uybqrwrxoyiivndyaugf.supabase.co/rest/v1',
-      key: 'sb_publishable_vmtGZwElbLEL6UyeoWsB3Q_Rv4A0jVM',
+      id: 'supabase', type: 'supabase', authoritative: true, enabled: true, // 2026-09-16 新建免费项目接替被删除的旧项目；保活由 .github/workflows/supabase-keepalive.yml 每日真实查询维持，防止再次被自动删除
+      url: 'https://hkdnlefmiltdzyvxyfmz.supabase.co/rest/v1',
+      key: 'sb_publishable_UHNxhV1iHvueDWhLTmrbTQ_z-RodEI4',
       table: 'wb_state'
     },
     // 国内备份后端（默认关闭）。填好下方 readUrl / writeUrl / headers 后把 enabled 改为 true 即启用。
@@ -181,7 +181,9 @@
 
   // 从「主后端 + 已启用备份」中读取某 key：主后端优先；主后端出错时回退到备份（灾备）
   function readFromAny(key) {
-    var order = [getBackend(AUTH_ID)].concat(enabledBackups());
+    var authB = getBackend(AUTH_ID);
+    var order = (authB && authB.enabled ? [authB] : []).concat(enabledBackups());
+    if (!order.length) return Promise.resolve({ ok: true }); // 无可用后端 → 视为云端无数据，本地为准
     var tries = order.map(function (b) { return readKey(b, key); });
     return Promise.all(tries).then(function (res) {
       for (var i = 0; i < res.length; i++) {
@@ -339,26 +341,38 @@
   function push() {
     if (!_firstPullDone) { _pendingPush = true; return Promise.resolve(true); }
     var authB = getBackend(AUTH_ID);
+    var authEnabled = !!(authB && authB.enabled);
     var backups = enabledBackups();
+    if (!authEnabled && !backups.length) {
+      // 无任何可用云端后端：纯本地模式，记录指纹避免无限重试
+      SYNC_KEYS.forEach(function (key) {
+        var local = LS.getItem(key);
+        if (local != null) _setFp(key, _fp(local));
+      });
+      _pushFails = 0;
+      return Promise.resolve(true);
+    }
     var tasks = SYNC_KEYS.map(function (key) {
       var local = LS.getItem(key);
       if (local == null) return Promise.resolve(true);
       var fp = _fp(local);
       if (_getFp(key) === fp) return Promise.resolve(true); // 内容未变，跳过（防版本号虚高/无限刷新）
+      var doWrites = function (merged, v, okCb) {
+        var writes = [];
+        if (authEnabled) writes.push(writeKey(authB, key, merged, v).then(function (ok) { if (ok && okCb) okCb(); return ok; }));
+        backups.forEach(function (b) { writes.push(writeKey(b, key, merged, v).then(function () {}).catch(function () {})); });
+        return Promise.all(writes).then(function (rs) { return rs.indexOf(false) === -1; });
+      };
+      if (!authEnabled) {
+        // 主后端不可用（如 Supabase 已删除）：本地为准，仍镜像到备份（若有）
+        var v0 = Date.now();
+        return doWrites(local, v0).then(function (ok) { if (ok) { setVer(key, v0); _setFp(key, _fp(local)); } return ok; });
+      }
       return readKey(authB, key).then(function (item) {
         var cloud = (item && item.value != null) ? item.value : null;
         var merged = mergeKey(key, local, cloud);
         var v = Date.now();
-        return writeKey(authB, key, merged, v).then(function (ok) {
-          if (ok) { setVer(key, v); _setFp(key, _fp(merged)); }
-          // 镜像到备份后端（best-effort，失败不影响主同步）
-          if (backups.length) {
-            backups.forEach(function (b) {
-              writeKey(b, key, merged, v).then(function () {}).catch(function () {});
-            });
-          }
-          return ok;
-        });
+        return doWrites(merged, v, function () { setVer(key, v); _setFp(key, _fp(merged)); }).then(function (ok) { return ok; });
       });
     });
     return Promise.all(tasks).then(function (rs) {
@@ -418,7 +432,7 @@
     isReady: function () { return true; },
     getCode: function () {
       var s = getBackend(AUTH_ID);
-      var c = (s && s.type === 'supabase') ? 'supabase-cloud' : 'cloud';
+      var c = (s && s.enabled && s.type === 'supabase') ? 'supabase-cloud' : (s && s.enabled ? 'cloud' : 'local');
       var bk = enabledBackups().length;
       return bk ? (c + '+backup(' + bk + ')') : c;
     },
