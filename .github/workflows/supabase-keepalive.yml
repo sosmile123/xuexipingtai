@@ -1,0 +1,26 @@
+name: Supabase Keepalive
+
+on:
+  schedule:
+    - cron: '17 3 * * 1,4'
+  workflow_dispatch: {}
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Real DB query (prevent free-tier pause/delete)
+        run: |
+          set -e
+          URL="https://hkdnlefmiltdzyvxyfmz.supabase.co"
+          KEY="sb_publishable_UHNxhV1iHvueDWhLTmrbTQ_z-RodEI4"
+          for i in 1 2 3; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "$URL/rest/v1/wb_state?select=key&limit=1" \
+              -H "apikey: $KEY" \
+              -H "Authorization: Bearer $KEY")
+            echo "keepalive ping $i -> HTTP $CODE"
+            test "$CODE" = "200"
+            sleep 5
+          done
+          echo "keepalive OK"
